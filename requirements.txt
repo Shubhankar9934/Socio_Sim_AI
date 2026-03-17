@@ -1,0 +1,46 @@
+# JADU - Synthetic Society Simulation Platform
+# Python 3.11+
+
+# API & Server
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+
+# Config & Validation
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+python-dotenv>=1.0.0
+
+# LLM
+openai>=1.12.0
+httpx>=0.26.0
+
+# Data & Math
+numpy>=1.26.0
+pandas>=2.2.0
+scipy>=1.12.0
+scikit-learn>=1.4.0
+
+# Graph & Simulation
+networkx>=3.2.0
+
+# Vector Store (Agent Memory)
+chromadb>=0.4.22
+
+# Narrative Similarity Detection
+sentence-transformers>=2.3.0
+
+# Async
+aiohttp>=3.9.0
+asyncio-throttle>=1.0.2
+
+# Storage (optional upgrade path)
+# sqlalchemy>=2.0.0
+# psycopg2-binary>=2.9.9
+
+# Visualization (analytics)
+matplotlib>=3.8.0
+plotly>=5.18.0
+
+# Dev & Testing
+pytest>=7.4.0
+pytest-asyncio>=0.23.0

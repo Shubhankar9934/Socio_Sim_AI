@@ -1,0 +1,6 @@
+# Documentation build (optional)
+# pip install -r requirements-docs.txt
+
+mkdocs>=1.5.0
+mkdocs-material>=9.0.0
+pymdown-extensions

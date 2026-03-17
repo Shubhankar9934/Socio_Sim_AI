@@ -1,0 +1,31 @@
+{
+  "food_delivery_frequency": {
+    "rarely": 0.30,
+    "1-2 per week": 0.35,
+    "3-4 per week": 0.20,
+    "daily": 0.10,
+    "multiple per day": 0.05
+  },
+  "parking_satisfaction": {
+    "1": 0.15, "2": 0.25, "3": 0.30, "4": 0.20, "5": 0.10
+  },
+  "transport_satisfaction": {
+    "1": 0.08, "2": 0.17, "3": 0.30, "4": 0.30, "5": 0.15
+  },
+  "housing_satisfaction": {
+    "1": 0.05, "2": 0.15, "3": 0.30, "4": 0.35, "5": 0.15
+  },
+  "shopping_frequency": {
+    "rarely": 0.15, "1-2 per month": 0.30, "weekly": 0.30, "2-3 per week": 0.15, "daily": 0.10
+  },
+  "nps_recommendation": {
+    "0": 0.02, "1": 0.02, "2": 0.03, "3": 0.04, "4": 0.05,
+    "5": 0.10, "6": 0.15, "7": 0.20, "8": 0.22, "9": 0.12, "10": 0.05
+  },
+  "tech_adoption_likelihood": {
+    "very unlikely": 0.05, "unlikely": 0.15, "neutral": 0.25, "likely": 0.35, "very likely": 0.20
+  },
+  "policy_support": {
+    "strongly oppose": 0.10, "oppose": 0.15, "neutral": 0.30, "support": 0.30, "strongly support": 0.15
+  }
+}

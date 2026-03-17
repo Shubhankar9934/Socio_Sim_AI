@@ -1,0 +1,99 @@
+{
+  "age": {
+    "18-24": 0.20,
+    "25-34": 0.35,
+    "35-44": 0.20,
+    "45-54": 0.15,
+    "55+": 0.10
+  },
+  "nationality": {
+    "Emirati": 0.12,
+    "Indian": 0.35,
+    "Pakistani": 0.15,
+    "Filipino": 0.10,
+    "Western": 0.10,
+    "Egyptian": 0.05,
+    "Other": 0.13
+  },
+  "income": {
+    "<10k": 0.30,
+    "10-25k": 0.40,
+    "25-50k": 0.20,
+    "50k+": 0.10
+  },
+  "location": {
+    "Dubai Marina": 0.10,
+    "Jumeirah": 0.08,
+    "Deira": 0.15,
+    "Business Bay": 0.12,
+    "Al Barsha": 0.10,
+    "JLT": 0.08,
+    "Downtown": 0.07,
+    "Al Karama": 0.08,
+    "JVC": 0.07,
+    "Others": 0.15
+  },
+  "household_size": {
+    "1": 0.25,
+    "2": 0.30,
+    "3-4": 0.28,
+    "5+": 0.17
+  },
+  "occupation": {
+    "professional": 0.35,
+    "service": 0.25,
+    "technical": 0.20,
+    "managerial": 0.12,
+    "other": 0.08
+  },
+  "income_given_nationality": {
+    "Emirati": {"<10k": 0.05, "10-25k": 0.25, "25-50k": 0.35, "50k+": 0.35},
+    "Indian": {"<10k": 0.25, "10-25k": 0.45, "25-50k": 0.25, "50k+": 0.05},
+    "Pakistani": {"<10k": 0.35, "10-25k": 0.45, "25-50k": 0.15, "50k+": 0.05},
+    "Filipino": {"<10k": 0.40, "10-25k": 0.45, "25-50k": 0.12, "50k+": 0.03},
+    "Western": {"<10k": 0.10, "10-25k": 0.25, "25-50k": 0.35, "50k+": 0.30},
+    "Egyptian": {"<10k": 0.30, "10-25k": 0.45, "25-50k": 0.20, "50k+": 0.05},
+    "Other": {"<10k": 0.28, "10-25k": 0.42, "25-50k": 0.22, "50k+": 0.08}
+  },
+  "location_given_income": {
+    "<10k": {
+      "Dubai Marina": 0.04, "Jumeirah": 0.03, "Deira": 0.22, "Business Bay": 0.06,
+      "Al Barsha": 0.12, "JLT": 0.06, "Downtown": 0.02, "Al Karama": 0.15,
+      "JVC": 0.10, "Others": 0.20
+    },
+    "10-25k": {
+      "Dubai Marina": 0.08, "Jumeirah": 0.06, "Deira": 0.14, "Business Bay": 0.12,
+      "Al Barsha": 0.11, "JLT": 0.10, "Downtown": 0.06, "Al Karama": 0.10,
+      "JVC": 0.09, "Others": 0.14
+    },
+    "25-50k": {
+      "Dubai Marina": 0.14, "Jumeirah": 0.12, "Deira": 0.08, "Business Bay": 0.16,
+      "Al Barsha": 0.10, "JLT": 0.12, "Downtown": 0.10, "Al Karama": 0.05,
+      "JVC": 0.06, "Others": 0.07
+    },
+    "50k+": {
+      "Dubai Marina": 0.18, "Jumeirah": 0.18, "Deira": 0.04, "Business Bay": 0.18,
+      "Al Barsha": 0.08, "JLT": 0.10, "Downtown": 0.14, "Al Karama": 0.02,
+      "JVC": 0.04, "Others": 0.08
+    }
+  },
+  "car_given_location": {
+    "Dubai Marina": 0.65, "Jumeirah": 0.75, "Deira": 0.55, "Business Bay": 0.60,
+    "Al Barsha": 0.70, "JLT": 0.62, "Downtown": 0.58, "Al Karama": 0.52,
+    "JVC": 0.72, "Others": 0.68
+  },
+  "metro_access_by_location": {
+    "Dubai Marina": true, "Jumeirah": false, "Deira": true, "Business Bay": true,
+    "Al Barsha": true, "JLT": true, "Downtown": true, "Al Karama": true,
+    "JVC": false, "Others": false
+  },
+  "occupation_given_nationality": {
+    "Emirati": {"professional": 0.25, "service": 0.15, "technical": 0.15, "managerial": 0.35, "other": 0.10},
+    "Indian": {"professional": 0.40, "service": 0.22, "technical": 0.25, "managerial": 0.08, "other": 0.05},
+    "Pakistani": {"professional": 0.30, "service": 0.30, "technical": 0.25, "managerial": 0.08, "other": 0.07},
+    "Filipino": {"professional": 0.20, "service": 0.50, "technical": 0.15, "managerial": 0.05, "other": 0.10},
+    "Western": {"professional": 0.35, "service": 0.15, "technical": 0.20, "managerial": 0.25, "other": 0.05},
+    "Egyptian": {"professional": 0.35, "service": 0.30, "technical": 0.20, "managerial": 0.10, "other": 0.05},
+    "Other": {"professional": 0.32, "service": 0.28, "technical": 0.22, "managerial": 0.10, "other": 0.08}
+  }
+}

@@ -1,0 +1,153 @@
+{
+  "info": {
+    "name": "Socio Sim AI - Survey Testing",
+    "description": "One question → get response → next question → get response. Use POST /survey for each question.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:8000" },
+    { "key": "session_id", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "0. Setup - Generate Population",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"n\": 50,\n  \"method\": \"bayesian\",\n  \"id_prefix\": \"DXB\"\n}"
+        },
+        "url": "{{base_url}}/population/generate",
+        "description": "Generate a synthetic population. Run this first before any survey. Use smaller n (e.g. 50) for faster testing."
+      }
+    },
+    {
+      "name": "1. Question 1",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"question\": \"How often do you use food delivery? Options: Never, Rarely, Sometimes, Often, Very Often\",\n  \"question_id\": \"q1\",\n  \"use_archetypes\": false\n}"
+        },
+        "url": "{{base_url}}/survey",
+        "description": "Ask → get response. Then run Question 2."
+      }
+    },
+    {
+      "name": "2. Question 2",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"question\": \"What influences your delivery choice? Options: Convenience, Price, Variety, Reviews, Speed\",\n  \"question_id\": \"q2\",\n  \"use_archetypes\": false\n}"
+        },
+        "url": "{{base_url}}/survey"
+      }
+    },
+    {
+      "name": "3. Question 3",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"question\": \"Would you pay more for eco-friendly packaging? Options: Yes, No, Maybe\",\n  \"question_id\": \"q3\",\n  \"use_archetypes\": false\n}"
+        },
+        "url": "{{base_url}}/survey"
+      }
+    },
+    {
+      "name": "4. Question 4",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"question\": \"How satisfied are you with delivery apps? Options: Very Satisfied, Satisfied, Neutral, Dissatisfied\",\n  \"question_id\": \"q4\",\n  \"use_archetypes\": false\n}"
+        },
+        "url": "{{base_url}}/survey"
+      }
+    },
+    {
+      "name": "5. Question 5",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"question\": \"Subscription or per-order pricing? Options: Subscription, Per-Order, No Preference\",\n  \"question_id\": \"q5\",\n  \"use_archetypes\": false\n}"
+        },
+        "url": "{{base_url}}/survey"
+      }
+    },
+    {
+      "name": "Multi-Survey (batch - all at once)",
+      "item": [
+        {
+          "name": "POST /survey/multi",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "if (pm.response.code === 200) {",
+              "  var json = pm.response.json();",
+              "  if (json.session_id) {",
+              "    pm.collectionVariables.set('session_id', json.session_id);",
+              "    console.log('Session ID saved:', json.session_id);",
+              "  }",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"questions\": [\n    { \"question\": \"How often do you use food delivery services? Options: Never, Rarely, Sometimes, Often, Very Often\", \"question_id\": \"q1_delivery_freq\" },\n    { \"question\": \"What influences your decision to order delivery? Options: Convenience, Price, Variety, Reviews, Speed\", \"question_id\": \"q2_delivery_reason\" },\n    { \"question\": \"Would you pay more for eco-friendly packaging? Options: Definitely Yes, Probably Yes, Neutral, Probably No, Definitely No\", \"question_id\": \"q3_eco_packaging\" },\n    { \"question\": \"How satisfied are you with delivery apps in Dubai? Options: Very Satisfied, Satisfied, Neutral, Dissatisfied, Very Dissatisfied\", \"question_id\": \"q4_satisfaction\" },\n    { \"question\": \"Do you prefer subscription plans or per-order pricing? Options: Subscription, Per-Order, Depends, No Preference\", \"question_id\": \"q5_pricing\" },\n    { \"question\": \"How important is delivery speed to you? Options: Not Important, Slightly, Moderately, Very, Extremely\", \"question_id\": \"q6_speed\" },\n    { \"question\": \"Would you try a new restaurant based on delivery app recommendations? Options: Yes Always, Often, Sometimes, Rarely, Never\", \"question_id\": \"q7_recommendations\" },\n    { \"question\": \"What cuisine do you order most often for delivery? Options: Arabic, Indian, Asian, Western, Mixed\", \"question_id\": \"q8_cuisine\" },\n    { \"question\": \"How would a 10% price increase affect your orders? Options: Stop ordering, Order much less, Order slightly less, No change, Would still order\", \"question_id\": \"q9_price_sensitivity\" },\n    { \"question\": \"Do you use multiple delivery apps or stick to one? Options: One only, 2 apps, 3+ apps\", \"question_id\": \"q10_app_usage\" }\n  ],\n  \"use_archetypes\": false,\n  \"social_influence_between_rounds\": true,\n  \"summarize_every\": 5\n}"
+        },
+        "url": "{{base_url}}/survey/multi",
+        "description": "Run a multi-question survey. Returns session_id immediately; survey runs in background. Poll progress or get results when done. Add more questions to the 'questions' array as needed."
+      }
+    },
+    {
+      "name": "3. Poll Multi-Survey Progress",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{base_url}}/survey/session/{{session_id}}/progress",
+        "description": "Check progress of a running multi-survey. Use the session_id from step 2. Poll every few seconds until status is 'completed'."
+      }
+    },
+    {
+      "name": "4. Get Multi-Survey Results",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{base_url}}/survey/session/{{session_id}}/results",
+        "description": "Get full results when multi-survey is completed. Returns all rounds with responses. Returns 409 if still running."
+      }
+    },
+    {
+      "name": "5. Get Single Round Results",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/survey/session/{{session_id}}/round/0",
+          "host": ["{{base_url}}"],
+          "path": ["survey", "session", "{{session_id}}", "round", "0"]
+        },
+        "description": "Get results for a specific round (0-indexed). Change '0' to 1, 2, 3... for other rounds."
+      }
+    }
+  ]
+}
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "age": {
+    "18-24": 0.20,
+    "25-34": 0.35,
+    "35-44": 0.20,
+    "45-54": 0.15,
+    "55+": 0.10
+  },
+  "nationality": {
+    "Emirati": 0.12,
+    "Indian": 0.35,
+    "Pakistani": 0.15,
+    "Filipino": 0.10,
+    "Western": 0.10,
+    "Egyptian": 0.05,
+    "Other": 0.13
+  },
+  "income": {
+    "<10k": 0.30,
+    "10-25k": 0.40,
+    "25-50k": 0.20,
+    "50k+": 0.10
+  },
+  "location": {
+    "Dubai Marina": 0.10,
+    "Jumeirah": 0.08,
+    "Deira": 0.15,
+    "Business Bay": 0.12,
+    "Al Barsha": 0.10,
+    "JLT": 0.08,
+    "Downtown": 0.07,
+    "Al Karama": 0.08,
+    "JVC": 0.07,
+    "Others": 0.15
+  },
+  "household_size": {
+    "1": 0.25,
+    "2": 0.30,
+    "3-4": 0.28,
+    "5+": 0.17
+  },
+  "occupation": {
+    "professional": 0.35,
+    "service": 0.25,
+    "technical": 0.20,
+    "managerial": 0.12,
+    "other": 0.08
+  }
+}

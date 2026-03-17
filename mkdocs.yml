@@ -1,0 +1,42 @@
+site_name: JADU — Socio Simulation AI
+site_description: Computational model of collective human cognition under information pressure
+theme:
+  name: material
+  palette:
+    primary: deep purple
+    accent: amber
+nav:
+  - Home: index.md
+  - Overview: overview.md
+  - Architecture: architecture.md
+  - Root Scripts: root-scripts.md
+  - Module Reference:
+    - Agents: modules/agents.md
+    - Analytics: modules/analytics.md
+    - API: modules/api.md
+    - Calibration: modules/calibration.md
+    - Config: modules/config.md
+    - Causal: modules/causal.md
+    - Discovery: modules/discovery.md
+    - Data: modules/data.md
+    - Evaluation: modules/evaluation.md
+    - LLM: modules/llm.md
+    - Media: modules/media.md
+    - Memory: modules/memory.md
+    - Population: modules/population.md
+    - Postman: modules/postman.md
+    - Research: modules/research.md
+    - Simulation: modules/simulation.md
+    - Social: modules/social.md
+    - Storage: modules/storage.md
+    - World: modules/world.md
+    - Tests: modules/tests.md
+markdown_extensions:
+  - tables
+  - admonition
+  - pymdownx.highlight
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format

@@ -1,0 +1,202 @@
+{
+  "city_id": "dubai",
+  "city_name": "Dubai",
+  "currency": "AED",
+  "id_prefix": "DXB",
+  "premium_areas": ["Dubai Marina", "Jumeirah", "Downtown", "Business Bay"],
+  "topic_keywords": {
+    "food_delivery": ["food delivery", "order food", "delivery", "talabat", "deliveroo", "zomato", "restaurant delivery", "order online", "takeaway"],
+    "parking": ["parking", "park", "car park", "parking availability", "finding parking"],
+    "transport": ["transport", "metro", "bus", "taxi", "commute", "mobility", "public transport", "sheikh zayed", "traffic", "driving"],
+    "housing": ["housing", "rent", "apartment", "accommodation", "living"],
+    "shopping": ["shopping", "mall", "retail", "buy", "purchase"],
+    "tech": ["app", "fintech", "technology", "digital", "online service", "payfast", "pay fast", "bank", "payment", "wallet", "recommend"],
+    "finance": ["network international", "payfast", "pay fast", "payment", "payment provider", "transaction", "bank", "fintech", "wallet", "recommend", "nps"],
+    "policy": ["policy", "regulation", "government", "law", "support", "oppose", "congestion", "pricing"],
+    "satisfaction": ["satisfied", "satisfaction", "happy", "experience", "rate", "rating"],
+    "general": []
+  },
+  "domain_keywords": {
+    "transport": ["metro", "bus", "taxi", "car", "parking", "traffic", "commute"],
+    "food": ["food", "delivery", "restaurant", "dining", "order", "cook"],
+    "lifestyle": ["shopping", "entertainment", "leisure", "sport"],
+    "housing": ["rent", "apartment", "housing", "accommodation"],
+    "services": ["service", "government", "utility", "health"],
+    "technology": ["app", "fintech", "digital", "tech", "online"]
+  },
+  "topic_to_model_key": {
+    "food_delivery": {"frequency": "food_delivery_frequency", "likert": "food_delivery_frequency", "categorical": "food_delivery_frequency"},
+    "parking": {"frequency": "parking_satisfaction", "likert": "parking_satisfaction", "categorical": "parking_satisfaction"},
+    "transport": {"frequency": "transport_satisfaction", "likert": "transport_satisfaction", "categorical": "transport_satisfaction"},
+    "housing": {"frequency": "housing_satisfaction", "likert": "housing_satisfaction", "categorical": "housing_satisfaction"},
+    "shopping": {"frequency": "shopping_frequency", "likert": "shopping_frequency", "categorical": "shopping_frequency"},
+    "tech": {"frequency": "tech_adoption_likelihood", "likert": "nps_recommendation", "categorical": "tech_adoption_likelihood"},
+    "finance": {"duration": "generic_duration", "frequency": "tech_adoption_likelihood", "likert": "nps_recommendation", "categorical": "nps_recommendation"},
+    "policy": {"frequency": "policy_support", "likert": "policy_support", "categorical": "policy_support"}
+  },
+  "location_terms": ["area", "district", "neighborhood", "where", "dubai", "marina", "deira", "jumeirah", "location", "local", "nearby"],
+  "services": {"food_delivery": 1.0, "ride_hailing": 1.0, "grocery_delivery": 1.0},
+  "price_levels": {"delivery_fee": 1.0, "fuel": 1.0},
+  "cultural_priors": {
+    "Western": {"rarely": 0.10, "1-2 per week": 0.25, "3-4 per week": 0.30, "daily": 0.25, "multiple per day": 0.10},
+    "Indian": {"rarely": 0.35, "1-2 per week": 0.30, "3-4 per week": 0.20, "daily": 0.10, "multiple per day": 0.05},
+    "Pakistani": {"rarely": 0.40, "1-2 per week": 0.30, "3-4 per week": 0.15, "daily": 0.10, "multiple per day": 0.05},
+    "Filipino": {"rarely": 0.30, "1-2 per week": 0.35, "3-4 per week": 0.20, "daily": 0.10, "multiple per day": 0.05},
+    "Emirati": {"rarely": 0.15, "1-2 per week": 0.25, "3-4 per week": 0.25, "daily": 0.20, "multiple per day": 0.15},
+    "Egyptian": {"rarely": 0.25, "1-2 per week": 0.35, "3-4 per week": 0.25, "daily": 0.10, "multiple per day": 0.05},
+    "Other": {"rarely": 0.25, "1-2 per week": 0.30, "3-4 per week": 0.25, "daily": 0.12, "multiple per day": 0.08}
+  },
+  "family_modifiers": {
+    "1": {"rarely": -0.10, "1-2 per week": 0.00, "3-4 per week": 0.03, "daily": 0.04, "multiple per day": 0.03},
+    "2": {"rarely": -0.03, "1-2 per week": 0.02, "3-4 per week": 0.02, "daily": 0.00, "multiple per day": -0.01},
+    "3-4": {"rarely": 0.08, "1-2 per week": 0.03, "3-4 per week": -0.03, "daily": -0.04, "multiple per day": -0.04},
+    "5+": {"rarely": 0.12, "1-2 per week": 0.05, "3-4 per week": -0.05, "daily": -0.06, "multiple per day": -0.06}
+  },
+  "income_modifiers": {
+    "<10k": {"rarely": 0.10, "1-2 per week": 0.02, "3-4 per week": -0.03, "daily": -0.05, "multiple per day": -0.04},
+    "10-25k": {"rarely": 0.02, "1-2 per week": 0.02, "3-4 per week": 0.00, "daily": -0.02, "multiple per day": -0.02},
+    "25-50k": {"rarely": -0.05, "1-2 per week": -0.02, "3-4 per week": 0.02, "daily": 0.03, "multiple per day": 0.02},
+    "50k+": {"rarely": -0.10, "1-2 per week": -0.03, "3-4 per week": 0.03, "daily": 0.05, "multiple per day": 0.05}
+  },
+  "implausible_combos": [
+    {"filters": {"income": "<10k", "household_size": "5+"}, "option": "multiple per day", "warning": "Very low income large family ordering multiple times daily is implausible"},
+    {"filters": {"income": "<10k", "household_size": "3-4"}, "option": "multiple per day", "warning": "Low income family ordering multiple deliveries daily is unusual"},
+    {"filters": {"household_size": "1", "income": "<10k"}, "option": "multiple per day", "warning": "Low-income single person ordering multiple deliveries daily is rare"},
+    {"filters": {"household_size": "5+"}, "option": "multiple per day", "warning": "Large families rarely order multiple deliveries per day"},
+    {"filters": {"health_focus": "very health-conscious"}, "option": "multiple per day", "warning": "Very health-conscious person ordering multiple deliveries daily is unlikely"},
+    {"filters": {"health_focus": "very health-conscious"}, "option": "daily", "warning": "Very health-conscious person ordering delivery every day is unusual"},
+    {"filters": {"health_focus": "fitness-focused", "diet": "vegan"}, "option": "daily", "warning": "Fitness-focused vegan ordering daily delivery is unusual"},
+    {"filters": {"health_focus": "fitness-focused", "diet": "vegan"}, "option": "multiple per day", "warning": "Fitness-focused vegan ordering multiple deliveries daily is unlikely"}
+  ],
+  "answer_habit_scores": {
+    "rarely": 0.1,
+    "1-2 per week": 0.35,
+    "3-4 per week": 0.6,
+    "daily": 0.8,
+    "multiple per day": 0.95
+  },
+  "vague_answers": {
+    "rarely": ["Not really.", "Nah.", "Hardly ever tbh.", "Almost never.", "Like once a month maybe?", "Not much honestly.", "Barely.", "Rarely if ever.", "Once in a blue moon.", "No not really.", "Nope.", "Almost never tbh.", "Not often.", "Very rarely.", "Barely ever.", "No.", "Maybe once a month.", "Hardly.", "Nah not really.", "Once in a while maybe."],
+    "1-2 per week": ["Maybe once or twice a week.", "Couple times a week.", "Like once a week I guess.", "Depends, but usually once.", "Yeah probably 1-2 times.", "Not too often, maybe weekly.", "About once a week.", "Weekends mostly.", "Once a week probably.", "Couple times.", "Maybe twice.", "Once or twice.", "Depends on the week.", "Weekends usually.", "Like once.", "Once maybe twice.", "Weekly ish."],
+    "3-4 per week": ["Few times a week.", "Pretty often actually.", "3-4 times probably.", "Most weekdays honestly.", "Yeah quite a bit.", "Several times a week.", "More than I should lol.", "Like 3-4 times.", "Often enough.", "Quite a lot.", "Yeah pretty often.", "Most days tbh.", "Few times.", "Often.", "Lot more than I planned."],
+    "daily": ["Every day pretty much.", "Daily.", "Yeah every day.", "Yep daily.", "Every single day.", "Can't avoid it at this point.", "Daily honestly.", "Yeah basically every day.", "Everyday.", "Every day.", "Pretty much daily.", "Daily lol.", "Yeah daily.", "Every night basically.", "Yep.", "All the time."],
+    "multiple per day": ["Multiple times a day.", "A lot.", "Few times daily.", "Like 2-3 times a day.", "Too much honestly.", "Breakfast and dinner at least.", "Yeah multiple times.", "Way too much.", "A lot lol.", "Constantly.", "2-3 times a day.", "Several times.", "All the time.", "More than I want to admit."]
+  },
+  "system_prompts": [
+    "You are a {city_name} resident answering a consumer survey. Be authentic and specific to your persona.",
+    "Answer as a real {city_name} resident would — personal, specific, grounded in daily experience.",
+    "You're filling out a survey about life in {city_name}. Answer naturally, as yourself.",
+    "Respond as a genuine {city_name} resident sharing honest opinions about daily life.",
+    "You're a {city_name} local taking a quick survey. Be real, be specific, be you.",
+    "Answer this survey question as a {city_name} resident. Draw from your daily routine and habits.",
+    "You live in {city_name}. Answer this survey honestly, based on your actual lifestyle.",
+    "As a {city_name} resident, share your genuine perspective on this question.",
+    "You're participating in a consumer survey about {city_name} life. Be authentic.",
+    "Respond naturally as a {city_name} resident — your real habits, real opinions."
+  ],
+  "archetype_hints": {
+    "busy_professional": "Time is your scarcest resource. Convenience services are a lifeline, not a luxury. Work hours dominate — exhaustion shapes most consumer decisions.",
+    "family_cook": "Cooking for the family is a point of pride and routine. Convenience services feel like a last resort or special treat.",
+    "health_focused": "Health and nutrition guide most decisions. Convenience services are risky because you lose control over ingredients and preparation.",
+    "budget_conscious": "Every unit of currency counts. Spending on convenience feels wasteful when alternatives exist. Price comparison is second nature.",
+    "convenience_seeker": "If an app or service can save time, you're in. Technology is a tool for efficiency. You optimize your daily routine for minimum friction.",
+    "social_foodie": "Dining and social experiences matter. Exploring new restaurants, cuisines, and food trends is a genuine hobby.",
+    "young_explorer": "New apps, new places, new experiences. Still figuring out routines. Price-conscious but willing to splurge on novelty.",
+    "traditionalist": "Home-prepared meals and traditional methods are core to your identity. Modern conveniences feel like settling for less.",
+    "student": "Budget is tight. Convenience spending is a splurge. Resourceful about finding deals and free alternatives."
+  },
+  "cultural_hints": {
+    "Indian": "Strong home-cooking culture rooted in family traditions. Meals are often communal. Convenience services supplement rather than replace home cooking.",
+    "Pakistani": "Hospitality and home-prepared food are cultural cornerstones. Large family gatherings centre on homemade dishes.",
+    "Filipino": "Community-oriented, budget-conscious. Group meals and shared cooking are common. Remittance obligations shape spending priorities.",
+    "Emirati": "Domestic help is common in households. Hospitality traditions run deep. Premium experiences are valued.",
+    "Western": "Familiar with convenience-oriented culture. Food apps and delivery are normalized. Work-life balance shapes consumer patterns.",
+    "Egyptian": "Social eating is important — ordering favourites for gatherings. Strong sense of value-for-money."
+  },
+  "frequency_interpretation": {
+    "rarely": "you {action} very infrequently, maybe once a month at most",
+    "1-2 per week": "you {action} about once or twice a week",
+    "3-4 per week": "you {action} several times a week, it is a regular part of your routine",
+    "daily": "you {action} every day, it is part of your daily routine",
+    "multiple per day": "you {action} multiple times a day, it is a major part of how you live"
+  },
+  "lifestyle_keywords": ["food", "delivery", "restaurant", "cooking", "cuisine", "dining", "eat", "meal", "grocery", "shopping"],
+  "strategic_actors": [
+    {
+      "name": "delivery_platform",
+      "goal": "increase_delivery_adoption",
+      "target_segments": ["age=25-34", "age=18-24"],
+      "strategy": {
+        "belief_emphasis": {"technology_optimism": 0.8, "innovation_curiosity": 0.6},
+        "sentiment_target": 0.5,
+        "emotional_intensity": 0.4,
+        "headline_templates": [
+          "Convenience services save {segment} 2 hours per week",
+          "New options make daily life easier for {segment}",
+          "Why smart choices benefit {benefit}"
+        ]
+      },
+      "budget_per_day": 1
+    },
+    {
+      "name": "health_ministry",
+      "goal": "promote_healthy_living",
+      "target_segments": [],
+      "strategy": {
+        "belief_emphasis": {"health_priority": 0.9, "environmental_concern": 0.3},
+        "sentiment_target": 0.3,
+        "emotional_intensity": 0.5,
+        "headline_templates": [
+          "Health authorities urge balanced nutrition for {segment}",
+          "New wellness guidelines: what {segment} need to know"
+        ]
+      },
+      "budget_per_day": 1,
+      "start_day": 30
+    }
+  ],
+  "question_to_semantic_key": {
+    "food_delivery_frequency": "delivery_frequency",
+    "parking_satisfaction": "parking_satisfaction",
+    "transport_satisfaction": "transport_satisfaction",
+    "shopping_frequency": "shopping_frequency",
+    "housing_satisfaction": "housing_satisfaction",
+    "tech_adoption_likelihood": "tech_adoption",
+    "policy_support": "policy_support",
+    "generic_frequency": "generic_frequency",
+    "generic_likert": "generic_likert",
+    "generic_duration": "tenure"
+  },
+  "question_belief_map": {
+    "food_delivery_frequency": {"price_consciousness": -0.25, "technology_optimism": 0.20, "innovation_curiosity": 0.15, "health_priority": -0.10},
+    "parking_satisfaction": {"government_trust": 0.35, "environmental_concern": 0.15, "price_consciousness": -0.15},
+    "transport_satisfaction": {"government_trust": 0.30, "environmental_concern": 0.25, "technology_optimism": 0.20, "price_consciousness": -0.10},
+    "shopping_frequency": {"brand_loyalty": 0.30, "price_consciousness": -0.25, "innovation_curiosity": 0.15},
+    "housing_satisfaction": {"government_trust": 0.25, "price_consciousness": -0.20, "environmental_concern": 0.15},
+    "tech_adoption_likelihood": {"technology_optimism": 0.40, "innovation_curiosity": 0.30, "brand_loyalty": 0.10},
+    "policy_support": {"government_trust": 0.35, "environmental_concern": 0.25, "price_consciousness": -0.15, "health_priority": 0.15}
+  },
+  "cuisine_by_nationality": {
+    "Indian": ["South Indian", "North Indian", "Mughlai", "Gujarati", "Kerala", "Punjabi", "Hyderabadi", "Rajasthani", "Bengali", "Chettinad", "Goan", "street food", "Indo-Chinese"],
+    "Pakistani": ["Pakistani", "Mughlai", "Biryani specialist", "Karahi", "Lahori", "Peshawari", "BBQ", "Nihari lover", "Chapli kebab fan"],
+    "Filipino": ["Filipino", "Asian fusion", "Adobo lover", "Seafood", "Sinigang fan", "Japanese-Filipino", "Korean", "Chinese-Filipino"],
+    "Emirati": ["Emirati traditional", "Arabic", "Lebanese", "Mixed Middle Eastern", "Khaleeji", "Yemeni", "Turkish", "Iranian", "Levantine"],
+    "Western": ["Italian", "Mediterranean", "American", "French", "Tex-Mex", "Japanese", "Thai", "Sushi lover", "Burger fan", "Brunch culture", "Spanish", "Greek"],
+    "Egyptian": ["Egyptian", "Arabic", "Mediterranean", "Levantine", "Koshari lover", "Ful medames fan", "Shawarma", "Mixed grill"],
+    "Other": ["Mixed", "Asian fusion", "Continental", "International", "Thai", "Chinese", "Japanese", "Mexican", "Korean", "Vietnamese"]
+  },
+  "diet_pool": {
+    "Indian": [["vegetarian", 0.35], ["no restriction", 0.45], ["vegan", 0.05], ["low-carb", 0.1], ["pescatarian", 0.05]],
+    "Pakistani": [["halal", 0.6], ["no restriction", 0.3], ["low-carb", 0.1]],
+    "Filipino": [["no restriction", 0.7], ["pescatarian", 0.15], ["low-carb", 0.15]],
+    "Emirati": [["halal", 0.65], ["no restriction", 0.2], ["low-carb", 0.15]],
+    "Western": [["no restriction", 0.4], ["keto", 0.15], ["vegetarian", 0.15], ["vegan", 0.1], ["gluten-free", 0.1], ["paleo", 0.1]],
+    "Egyptian": [["halal", 0.55], ["no restriction", 0.35], ["vegetarian", 0.1]],
+    "Other": [["no restriction", 0.6], ["vegetarian", 0.15], ["halal", 0.15], ["low-carb", 0.1]]
+  },
+  "cultural_family_multiplier": {
+    "Emirati": 1.4, "Pakistani": 1.2, "Indian": 1.2, "Egyptian": 1.2,
+    "Filipino": 1.1, "Western": 0.7, "Other": 1.0
+  },
+  "late_dinner_nationalities": ["Indian", "Pakistani", "Egyptian", "Emirati"]
+}
