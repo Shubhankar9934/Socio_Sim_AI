@@ -37,6 +37,7 @@ class SurveyRequest(BaseModel):
     question_id: Optional[str] = ""
     use_archetypes: bool = False
     options: Optional[List[str]] = None  # If empty or None, treated as open_text
+    current_events: Optional[List[Dict[str, Any]]] = None  # Real-time media: temp_beliefs at survey time
 
 
 class AgentDemographics(BaseModel):

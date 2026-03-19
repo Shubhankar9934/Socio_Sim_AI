@@ -61,6 +61,7 @@ async def run_survey_endpoint(body: SurveyRequest) -> SurveyResult:
         options=body.options,
         think_fn=None,
         use_archetypes=use_archetypes,
+        current_events=body.current_events,
     )
     items = [
         SurveyResponseItem(

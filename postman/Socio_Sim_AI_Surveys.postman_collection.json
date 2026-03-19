@@ -88,7 +88,7 @@
       "item": [
         {
           "name": "POST /survey/multi",
-      "event": [
+          "event": [
         {
           "listen": "test",
           "script": {
@@ -104,8 +104,8 @@
             "type": "text/javascript"
           }
         }
-      ],
-      "request": {
+          ],
+          "request": {
         "method": "POST",
         "header": [{ "key": "Content-Type", "value": "application/json" }],
         "body": {
@@ -114,8 +114,8 @@
         },
         "url": "{{base_url}}/survey/multi",
         "description": "Run a multi-question survey. Returns session_id immediately; survey runs in background. Poll progress or get results when done. Add more questions to the 'questions' array as needed."
-      }
-    },
+          }
+        },
     {
       "name": "3. Poll Multi-Survey Progress",
       "request": {

@@ -272,13 +272,46 @@ _NUMERIC_MICRO_VARIANTS: List[str] = [
     ),
 ]
 
-_LIKERT_INSTRUCTION_VARIANTS: List[str] = [
+# Hidden-state: stance-only, no numbers in answer. CRITICAL RULE first (D.5).
+_CRITICAL_RULE_NO_NUMBERS: str = (
+    "CRITICAL RULE:\n"
+    "- Do NOT include any number (1, 2, 3, 4, 5).\n"
+    "- Do NOT mention 'score', 'rating', or 'scale'.\n"
+    "- If you violate this, the answer is invalid.\n\n"
+)
+
+_NUMERIC_HIDDEN_STATE_VARIANTS: List[str] = [
     (
-        'Your answer corresponds to: "{sampled_option}".\n'
-        "Explain your stance in 1-2 short sentences."
+        _CRITICAL_RULE_NO_NUMBERS
+        + "Your true stance is exactly: **{mapped_scale_meaning}**.\n"
+        "Write a natural, 1-2 sentence response explaining why you feel that way. "
+        "Use your demographics, income, and lifestyle in your explanation. "
+        "Speak like a human talking to a friend or leaving a casual comment online."
     ),
     (
-        'You chose "{sampled_option}". Briefly explain why.'
+        _CRITICAL_RULE_NO_NUMBERS
+        + "Your stance is: **{mapped_scale_meaning}**.\n"
+        "In 1-2 sentences, explain your view naturally. Speak naturally as this person."
+    ),
+]
+
+_NUMERIC_HIDDEN_STATE_MICRO_VARIANTS: List[str] = [
+    (
+        _CRITICAL_RULE_NO_NUMBERS
+        + "Your stance is: **{mapped_scale_meaning}**.\n"
+        "Reply in one short, natural sentence."
+    ),
+]
+
+_LIKERT_INSTRUCTION_VARIANTS: List[str] = [
+    (
+        _CRITICAL_RULE_NO_NUMBERS
+        + 'Your stance is: "{sampled_option}".\n'
+        "Write 1-2 sentences explaining why, in natural language."
+    ),
+    (
+        _CRITICAL_RULE_NO_NUMBERS
+        + 'You chose "{sampled_option}". Briefly explain why in natural language.'
     ),
 ]
 
@@ -373,6 +406,55 @@ def _load_cultural_hints() -> Dict[str, str]:
 
 
 CULTURAL_BEHAVIOR_HINTS: Dict[str, str] = _load_cultural_hints()
+
+
+def _stance_category(option: str) -> str:
+    """Map sampled_option to stance category for semantic content enforcement.
+    Returns: strong_support | support | neutral | oppose | strong_oppose
+    """
+    o = option.lower().strip()
+    if "strong" in o and ("support" in o or "agree" in o or "favor" in o):
+        return "strong_support"
+    if "strong" in o and ("oppose" in o or "disagree" in o or "against" in o):
+        return "strong_oppose"
+    if o in ("neutral", "no opinion", "undecided", "neither", "not sure", "mixed", "depends"):
+        return "neutral"
+    if "support" in o or "agree" in o or "favor" in o:
+        return "support"
+    if "oppose" in o or "disagree" in o or "against" in o:
+        return "oppose"
+    return "neutral"
+
+
+def _violates_strong_stance(text: str) -> bool:
+    """True if text contains hedging/contradiction phrases that violate strong stance."""
+    t = text.lower()
+    banned = ["but", "however", "on the other hand", "on one hand", "depends", "mixed feelings"]
+    return any(phrase in t for phrase in banned)
+
+
+def _text_expresses_stance(text: str, stance_cat: str) -> bool:
+    """True if text contains language that expresses the given stance (for decision-text consistency)."""
+    t = text.lower()
+    if stance_cat == "strong_support":
+        return any(
+            w in t for w in (
+                "support", "agree", "favor", "back", "smart move", "right move",
+                "great", "absolutely", "fully support", "strongly support", "all for it",
+            )
+        )
+    if stance_cat == "strong_oppose":
+        return any(
+            w in t for w in (
+                "oppose", "against", "disagree", "ridiculous", "bad idea", "wrong",
+                "terrible", "absolutely not", "strongly oppose", "no way",
+            )
+        )
+    if stance_cat == "support":
+        return any(w in t for w in ("support", "agree", "for it", "back it"))
+    if stance_cat == "oppose":
+        return any(w in t for w in ("oppose", "against", "disagree", "not for"))
+    return True  # neutral or unknown: allow
 
 
 def _persona_context(persona: Persona) -> dict:
@@ -500,19 +582,19 @@ def build_agent_prompt(
     elif scale_type == "numeric":
         numeric_label_map = _resolve_numeric_label_map(option_labels, options, question)
         sampled_label = numeric_label_map.get(sampled_option, "")
-        semantic_guardrail = ""
         if sampled_label:
-            legend = _format_numeric_legend(numeric_label_map)
-            semantic_guardrail = (
-                f"IMPORTANT SCALE SEMANTICS: {legend}.\n"
-                f'You selected option "{sampled_option}", which means "{sampled_label}".\n'
-                "Your explanation must justify this exact stance. Do not invert the meaning."
+            variants = (
+                _NUMERIC_HIDDEN_STATE_MICRO_VARIANTS if length == "micro"
+                else _NUMERIC_HIDDEN_STATE_VARIANTS
             )
-        variants = _NUMERIC_MICRO_VARIANTS if length == "micro" else _NUMERIC_INSTRUCTION_VARIANTS
-        instruction = r.choice(variants).format(
-            sampled_option=sampled_option,
-            semantic_guardrail=semantic_guardrail,
-        )
+            instruction = r.choice(variants).format(mapped_scale_meaning=sampled_label)
+        else:
+            semantic_guardrail = ""
+            variants = _NUMERIC_MICRO_VARIANTS if length == "micro" else _NUMERIC_INSTRUCTION_VARIANTS
+            instruction = r.choice(variants).format(
+                sampled_option=sampled_option,
+                semantic_guardrail=semantic_guardrail,
+            )
     elif scale_type == "likert":
         variants = _LIKERT_INSTRUCTION_VARIANTS
         instruction = r.choice(variants).format(sampled_option=sampled_option)
@@ -530,6 +612,65 @@ def build_agent_prompt(
     else:  # categorical
         variants = _CATEGORICAL_INSTRUCTION_VARIANTS
         instruction = r.choice(variants).format(sampled_option=sampled_option)
+
+    # Stance confidence -> HARD constraints + semantic alignment (plan: output_quality_refined)
+    stance_confidence = 0.5
+    if scale_type not in ("open_text", "duration") and distribution:
+        prob = distribution.get(sampled_option)
+        if prob is None:
+            prob = max(distribution.values(), default=0.5) if distribution else 0.5
+        stance_confidence = float(prob)
+        if stance_confidence >= 0.6:
+            instruction += (
+                "\nYour decision is strong. Speak decisively: Do NOT hedge and Do NOT present both sides. "
+                "State a clear, single-sided opinion. Do NOT use 'on one hand', 'it depends', or similar phrases. "
+                "Do NOT contradict your stance. Do NOT include opposing arguments if your stance is strong. "
+                "If your stance is strong, express it with conviction and emotion."
+            )
+        elif stance_confidence >= 0.4:
+            instruction += "\nYour decision is moderate; you may use cautious or hedging language."
+        else:
+            instruction += "\nYour decision is uncertain; use tentative language."
+
+        # Semantic content enforcement (redundant for compliance)
+        option_for_stance = sampled_option
+        if scale_type == "numeric":
+            _numeric_map = _resolve_numeric_label_map(option_labels, options, question)
+            if _numeric_map.get(sampled_option):
+                option_for_stance = _numeric_map.get(sampled_option, sampled_option)
+        stance_cat = _stance_category(option_for_stance)
+        if stance_cat == "strong_support":
+            instruction += (
+                "\nYour stance is: STRONGLY SUPPORT. You MUST clearly express strong support. "
+                "Do NOT express neutrality or mixed feelings. Do NOT weaken your stance. Express it with conviction and emotion."
+            )
+        elif stance_cat == "strong_oppose":
+            instruction += (
+                "\nYour stance is: STRONGLY OPPOSE. You MUST clearly express strong opposition. "
+                "Do NOT express neutrality or mixed feelings. Do NOT weaken your stance. Express it with conviction and emotion."
+            )
+        elif stance_cat == "support":
+            instruction += "\nYou MUST express support clearly (do not hedge)."
+        elif stance_cat == "oppose":
+            instruction += "\nYou MUST express opposition clearly (do not hedge)."
+        elif stance_cat == "neutral":
+            instruction += "\nYou may express uncertainty or mixed feelings."
+
+    # Global: anti-policy-analyst, min completeness, anti-overthinking, anti-expert
+    if scale_type not in ("open_text", "duration"):
+        instruction += (
+            "\nDo NOT try to sound balanced or politically neutral. Respond as a real person with a clear opinion. "
+            "Your response MUST contain a complete opinion and be at least 8 words. Do not output only a filler or opening phrase. "
+            "Do NOT overanalyze. Respond quickly and instinctively like a real person. "
+            "Do NOT justify your opinion like an expert. Speak casually."
+        )
+        # Randomized voice for population diversity
+        _voice_variants = [
+            "Respond like a casual comment online.",
+            "Respond like you're talking to a friend.",
+            "Respond naturally in your own voice.",
+        ]
+        instruction += "\n" + r.choice(_voice_variants)
 
     warn_block = ""
     if consistency_warning:
@@ -752,12 +893,15 @@ async def reasoner_via_llm(
     )
     # Skip vague-answer bypass for open_text (no predefined option)
     is_open_text = not distribution
+    _min_vague_words = 5
     if not is_open_text:
         vague_prob = vague_answer_probability_for_profile(_profile)
         if rng.random() < vague_prob:
-            vague = pick_vague_answer(sampled_answer, rng)
-            if vague:
-                return vague
+            for _ in range(3):  # try up to 3 draws for a long enough vague answer
+                vague = pick_vague_answer(sampled_answer, rng)
+                if vague and len(vague.split()) >= _min_vague_words:
+                    return vague
+            # no long enough vague answer: fall through to LLM
 
     client = get_llm_client()
     system_prompt = _pick_system_prompt(rng)
@@ -766,6 +910,9 @@ async def reasoner_via_llm(
     numeric_label_map = _resolve_numeric_label_map(option_labels, scale, question)
 
     consistency_warning: Optional[str] = None
+    stance_confidence = float(distribution.get(sampled_answer, 0.5)) if distribution else 0.5
+    option_for_stance = numeric_label_map.get(sampled_answer) or sampled_answer
+    stance_cat = _stance_category(option_for_stance)
 
     for attempt in range(_MAX_RETRIES + 1):
         prompt = build_agent_prompt(
@@ -785,6 +932,13 @@ async def reasoner_via_llm(
             temperature=temperature,
             max_tokens=256,
         )
+
+        # Min-length guard: reject very short LLM output (orphaned filler)
+        if not is_open_text and len(result.split()) < 8 and attempt < _MAX_RETRIES:
+            consistency_warning = (
+                "Your answer was too short. Write a complete 1-2 sentence opinion (at least 8 words)."
+            )
+            continue
 
         if is_banned_pattern(result) and attempt < _MAX_RETRIES:
             continue
@@ -830,10 +984,35 @@ async def reasoner_via_llm(
                     )
                     continue
 
+            # Hard post-generation filter: strong stance must not contain hedging/contradiction
+            if stance_confidence >= 0.6 and _violates_strong_stance(result) and attempt < _MAX_RETRIES:
+                consistency_warning = (
+                    "Your answer contradicted a strong stance. Do NOT use 'but', 'however', "
+                    "'on one hand', 'on the other hand', or 'depends'. State a single-sided opinion only."
+                )
+                continue
+
+            # Decision-text consistency: narrative must express the chosen stance
+            if stance_cat in ("strong_support", "strong_oppose", "support", "oppose"):
+                if not _text_expresses_stance(result, stance_cat) and attempt < _MAX_RETRIES:
+                    consistency_warning = (
+                        f"Your answer did not clearly express \"{option_for_stance}\". "
+                        "You MUST state your position clearly (e.g. support/oppose/agree/against)."
+                    )
+                    continue
+
         # Post-hoc hedging for human texture
         result = maybe_add_hedging(result, rng)
         result = maybe_fragmentize(result, _profile, rng)
         result = degrade_polish(result, rng)
+
+        # Final min-length guard: post-hoc steps can truncate; never return < 8 words
+        if not is_open_text and len(result.split()) < 8 and attempt < _MAX_RETRIES:
+            consistency_warning = (
+                "Your answer was too short after editing. Write a complete 1-2 sentence opinion (at least 8 words)."
+            )
+            continue
+
         return result
     result = maybe_add_hedging(result, rng)
     result = maybe_fragmentize(result, _profile, rng)

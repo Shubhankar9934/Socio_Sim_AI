@@ -1,0 +1,25 @@
+{
+  "behavioral": [
+    {
+      "name": "delivery_frequency",
+      "description": "This dimension captures the regularity of an individual's behavior regarding food delivery services.",
+      "representative_questions": [
+        "How often do you order delivery?"
+      ]
+    }
+  ],
+  "belief": [
+    {
+      "name": "delivery_frequency",
+      "description": "This dimension reflects the consumer's habits and preferences regarding food delivery services.",
+      "representative_questions": [
+        "How often do you order delivery?"
+      ]
+    }
+  ],
+  "question_to_dimension": {
+    "How often do you order delivery?": {
+      "delivery_frequency": 1.0
+    }
+  }
+}

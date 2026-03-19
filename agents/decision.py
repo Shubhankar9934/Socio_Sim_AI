@@ -235,6 +235,16 @@ def compute_distribution(
         spike_idx = int(gen.integers(0, n))
         raw_scores[spike_idx] += _SPIKE_BOOST
 
+    # Stage 6.5: optional response variability (jitter then clip for numerical stability)
+    try:
+        from config.settings import get_settings
+        var_std = getattr(get_settings(), "response_variability_std", 0.0)
+    except Exception:
+        var_std = 0.0
+    if var_std > 0:
+        jitter = gen.normal(0, var_std, size=n)
+        raw_scores = [max(-20.0, min(20.0, r + float(j))) for r, j in zip(raw_scores, jitter)]
+
     # Stage 7: softmax with per-agent temperature
     temp = question_model.temperature
     if persona is not None and traits is not None:
@@ -259,6 +269,17 @@ def compute_distribution(
     if abs(total - 1.0) > 1e-6:
         probs = [p / total for p in probs]
     assert all(p >= 0 for p in probs), f"Negative probability detected: {probs}"
+
+    # Optional entropy floor: add epsilon to each prob and renormalize
+    try:
+        from config.settings import get_settings
+        eps = getattr(get_settings(), "entropy_floor_epsilon", 0.0)
+    except Exception:
+        eps = 0.0
+    if eps > 0:
+        probs = [p + eps for p in probs]
+        total = sum(probs)
+        probs = [p / total for p in probs]
 
     dist = dict(zip(question_model.scale, probs))
 
@@ -302,6 +323,33 @@ def compute_distribution(
         from agents.utility import blend_utility_into_distribution
         goal_profile = getattr(agent_state, "goal_profile", None)
         dist = blend_utility_into_distribution(dist, goal_profile, agent_state)
+
+    # Stage 14: competition-based neutral penalty (plan: output_quality_refined)
+    try:
+        from config.settings import get_settings
+        penalty = getattr(get_settings(), "neutral_penalty_when_competing_above", 0.0)
+    except Exception:
+        penalty = 0.0
+    if penalty > 0 and dist:
+        _NEUTRAL_LABELS = frozenset({
+            "neutral", "no opinion", "undecided", "neither",
+            "not sure", "mixed", "depends",
+        })
+        neutral_key = None
+        for k in dist:
+            if k.lower().strip() in _NEUTRAL_LABELS:
+                neutral_key = k
+                break
+        if neutral_key is not None:
+            items = sorted(dist.items(), key=lambda x: x[1], reverse=True)
+            if len(items) >= 2:
+                second_best = items[1][1]
+                if second_best > 0.4:
+                    dist = dict(dist)
+                    dist[neutral_key] = dist[neutral_key] * (1.0 - penalty)
+                    total = sum(dist.values())
+                    if total > 0:
+                        dist = {k: v / total for k, v in dist.items()}
 
     return dist
 

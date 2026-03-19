@@ -53,6 +53,10 @@ Server: `http://0.0.0.0:8000`. Docs: `http://localhost:8000/docs`.
 5. **Evaluate**  
    `POST /evaluate/{survey_id}` with `{"run_judge": false}` (or `true` for LLM judge).
 
+## Deep-dive API docs (JADU_Full_API)
+
+Per-area documentation with request/response fields, code flow, and how outputs are computed: **[docs/jadu-api/](docs/jadu-api/)** (also in the **MkDocs** site / GitHub Pages under *JADU API reference (Postman)*). A short pointer remains at [docs2/README.md](docs2/README.md).
+
 ## API summary
 
 | Method | Path | Description |

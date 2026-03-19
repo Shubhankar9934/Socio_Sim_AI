@@ -90,7 +90,7 @@ class AgentCognitiveEngine:
             env.setdefault("structured_memory", self.state.structured_memory)
         if hasattr(self, "_world_environment") and self._world_environment:
             for k, v in self._world_environment.items():
-                env.setdefault(k, v)
+                env[k] = v  # allow override e.g. temp_beliefs for survey-time media
         # Inject activation level (set by simulation kernel) for
         # temperature / bias modulation in the decision pipeline.
         activation = getattr(self.state, "current_activation", 0.0)

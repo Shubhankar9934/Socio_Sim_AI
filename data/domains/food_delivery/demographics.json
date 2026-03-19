@@ -1,0 +1,28 @@
+{
+  "age": {
+    "18-24": 0.2,
+    "25-34": 0.3,
+    "35-44": 0.25,
+    "45-54": 0.15,
+    "55+": 0.1
+  },
+  "nationality": {
+    "local": 0.5,
+    "other": 0.5
+  },
+  "income": {
+    "low": 0.3,
+    "medium": 0.4,
+    "high": 0.3
+  },
+  "location": {
+    "urban": 0.6,
+    "suburban": 0.3,
+    "rural": 0.1
+  },
+  "occupation": {
+    "employed": 0.7,
+    "student": 0.15,
+    "other": 0.15
+  }
+}

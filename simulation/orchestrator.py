@@ -178,6 +178,7 @@ async def run_survey(
     think_fn: Optional[Callable[..., Any]] = None,
     use_archetypes: bool = False,
     max_concurrent: Optional[int] = None,
+    current_events: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Run survey: each agent answers the question via think_fn.
@@ -211,8 +212,9 @@ async def run_survey(
     import api.state as _app_state
     _sg = _app_state.social_graph
     _has_states = any(a.get("state") is not None for a in agents)
+    warmup_steps = getattr(settings, "survey_social_warmup_steps", 1)
     if _sg is not None and _has_states and len(agents) >= 2:
-        _social_warmup(agents, _sg, warmup_steps=3)
+        _social_warmup(agents, _sg, warmup_steps=warmup_steps)
         _neighbor_means = _compute_neighbor_latent_means(
             agents, _sg, seed=getattr(settings, "master_seed", 42),
         )
@@ -223,6 +225,50 @@ async def run_survey(
                 if nm is not None:
                     a.setdefault("environment", {})["neighbor_latent_mean"] = nm
                     _env_cache[p.agent_id] = a.get("environment", {})
+
+    # --- Real-time media: temp_beliefs for decision only when current_events provided ---
+    if current_events:
+        try:
+            from media.framing import generate_frames
+            from media.exposure import compute_exposure_matrices
+            from agents.belief_network import BELIEF_DIMENSIONS, BeliefNetwork
+            import numpy as np
+
+            frames = generate_frames(current_events)
+            if frames:
+                raw_exposure, _, _ = compute_exposure_matrices(agents, frames)
+                media_weight = getattr(settings, "media_weight_survey", 0.05)
+                n_frames = len(frames)
+                for i, a in enumerate(agents):
+                    state = a.get("state")
+                    if state is None or not hasattr(state, "beliefs"):
+                        continue
+                    total_exposure = raw_exposure[i].sum() if i < raw_exposure.shape[0] else 0.0
+                    if total_exposure < 1e-6:
+                        continue
+                    media_signal = np.zeros(len(BELIEF_DIMENSIONS), dtype=np.float64)
+                    for j, frame in enumerate(frames):
+                        if j >= raw_exposure.shape[1]:
+                            break
+                        weight = raw_exposure[i, j]
+                        if weight < 1e-8:
+                            continue
+                        for dim_idx, dim in enumerate(BELIEF_DIMENSIONS):
+                            media_signal[dim_idx] += weight * frame.belief_impacts.get(dim, 0.0)
+                    media_signal /= total_exposure
+                    current = state.beliefs.to_vector()
+                    temp_vec = np.clip(
+                        current + media_weight * media_signal,
+                        0.0,
+                        1.0,
+                    )
+                    temp_beliefs = BeliefNetwork.from_vector(temp_vec)
+                    a.setdefault("environment", {})["beliefs"] = temp_beliefs
+                    p = a.get("persona")
+                    if p:
+                        _env_cache[p.agent_id] = a.get("environment", {})
+        except Exception:
+            pass
 
     # --- Shared research context (one lookup per question, not per agent) ---
     _research_ctx = None

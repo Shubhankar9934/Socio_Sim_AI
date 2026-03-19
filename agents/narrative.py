@@ -407,6 +407,8 @@ BANNED_PHRASES_ANYWHERE: List[str] = [
     "back home we always", "the way my week goes",
     "between work and everything", "coming from a",
     "my family back home", "the thing about",
+    "score:", "scored it", "rating:", "out of 5", "out of 10",
+    "i give it a", "my score", "my rating", "i scored",
 ]
 
 
@@ -436,15 +438,26 @@ def validate_duration_answer(text: str) -> bool:
     return bool(_DURATION_VALID_PATTERN.search(text))
 
 
+# Score/rating leakage (real humans don't say "I give it a 5" or "Score: 3")
+_SCORE_LEAKAGE = re.compile(
+    r"\b(score|rating|rate)\s*:?\s*\d|\bscored\s+it\s+\d|\b(out of|/)\s*\d\b|"
+    r"\bgive\s+it\s+a\s+\d|\bi\s+give\s+it\s+\d|\b\d\s*out of\s*\d\b",
+    re.IGNORECASE,
+)
+
+
 def is_banned_pattern(text: str) -> bool:
     """Return True if the text contains a banned AI-style pattern.
 
     Checks both start-of-string regex anchors and mid-sentence substring
     matches (punctuation-normalized) to catch hedging-prefixed clichés
     like ``"I mean look, with my busy schedule..."``.
+    Also rejects score/rating leakage (e.g. "Score: 5", "I give it a 3").
     """
     text_stripped = text.strip()
     if any(pat.search(text_stripped) for pat in _BANNED_COMPILED):
+        return True
+    if _SCORE_LEAKAGE.search(text_stripped):
         return True
 
     normalized = re.sub(r'[^\w\s]', ' ', text_stripped.lower())
@@ -596,10 +609,8 @@ def validate_narrative_consistency(
 
     text_lower = narrative.lower()
 
-    # Numeric scale: require the sampled score to appear in the text
+    # Numeric scale: when using hidden-state (option_label_map), validate stance only
     if _is_numeric_scale(scale):
-        if not validate_numeric_consistency(narrative, sampled_option):
-            return False, sampled_option
         if option_label_map and sampled_option in option_label_map:
             expected = _infer_label_stance(option_label_map.get(sampled_option, ""))
             observed = _infer_narrative_stance(narrative)
@@ -609,6 +620,9 @@ def validate_narrative_consistency(
                 and expected != observed
             ):
                 return False, sampled_option
+            return True, None
+        if not validate_numeric_consistency(narrative, sampled_option):
+            return False, sampled_option
         return True, None
 
     # Layer 1: direct frequency keyword contradiction
@@ -750,7 +764,7 @@ def build_style_instruction(
         "anecdote": "Open with a brief personal anecdote, then give your answer.",
         "question_then_answer": "Pose a rhetorical question to yourself, then answer it.",
         "direct_statement": "Jump straight into your answer with no preamble.",
-        "conditional": "Describe it as 'it depends on…' with your typical case.",
+        "conditional": "Give your view and a typical situation where it applies, without defaulting to 'it depends'.",
     }
     hint = structure_hints.get(structure, "Write naturally.")
     length_hint = LENGTH_HINTS.get(length, LENGTH_HINTS["medium"])

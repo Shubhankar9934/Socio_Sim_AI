@@ -1,0 +1,412 @@
+{
+  "info": {
+    "name": "JADU - Full API",
+    "description": "**JADU** (v0.1.0) – Synthetic society simulation: survey orchestration, analytics, evaluation.\n\n**Flow:** 1) POST /population/generate → 2) GET /agents (optional) → 3) POST /survey or POST /survey/multi → 4) GET /analytics/:survey_id, POST /evaluate/:survey_id. Simulation, discovery, calibration can be used as needed.\n\n**Env:** base_url, session_id, survey_id, agent_id. See postman/README.md for full input/output and flow per API.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:8000" },
+    { "key": "session_id", "value": "" },
+    { "key": "survey_id", "value": "" },
+    { "key": "agent_id", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "population",
+      "description": "**Population** – Generate synthetic agents and social graph. Run **POST /population/generate** first before any survey, simulation, or analytics.",
+      "item": [
+        {
+          "name": "POST /population/generate",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"n\": 50,\n  \"method\": \"bayesian\",\n  \"id_prefix\": \"DXB\",\n  \"seed\": null\n}"
+            },
+            "url": "{{base_url}}/population/generate",
+            "description": "**Purpose:** Creates synthetic population (personas), Barabási–Albert social graph, agent state.\n\n**Flow:** Call once at session start; then use GET /agents, POST /survey, etc.\n\n**Input (body):** n (int, 10–10000, default 500), method (\"monte_carlo\"|\"bayesian\"|\"ipf\"), id_prefix (string), seed (int, optional).\n\n**Output (200):** n, method, realism_passed, realism_score, per_attribute, segment_distribution."
+          }
+        }
+      ]
+    },
+    {
+      "name": "agents",
+      "description": "**Agents** – List and inspect synthetic agents. Requires population from POST /population/generate.",
+      "item": [
+        {
+          "name": "GET /agents",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/agents?limit=100&offset=0",
+              "host": ["{{base_url}}"],
+              "path": ["agents"],
+              "query": [
+                { "key": "location", "value": "", "disabled": true },
+                { "key": "nationality", "value": "", "disabled": true },
+                { "key": "limit", "value": "100" },
+                { "key": "offset", "value": "0" }
+              ]
+            },
+            "description": "**Purpose:** Paginated list of agent summaries (demographics).\n\n**Flow:** After POST /population/generate; use to get agent_id for GET /agents/:agent_id.\n\n**Input (query):** location, nationality (optional filters), limit (1–1000, default 100), offset (default 0).\n\n**Output (200):** Array of { agent_id, age, nationality, income, location, occupation }."
+          }
+        },
+        {
+          "name": "GET /agents/:agent_id",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/agents/{{agent_id}}",
+            "description": "**Purpose:** Full record for one agent: persona + state.\n\n**Flow:** Set path agent_id (e.g. from GET /agents or env).\n\n**Input (path):** agent_id (string, required).\n\n**Output (200):** agent_id, persona (object), state (object or null). 404 if not found."
+          }
+        }
+      ]
+    },
+    {
+      "name": "survey",
+      "description": "**Survey** – Single-question (sync) and multi-question (async) surveys. Copy survey_id from POST /survey for analytics and evaluation.",
+      "item": [
+        {
+          "name": "POST /survey (single question)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"How often do you use food delivery? Options: Never, Rarely, Sometimes, Often, Very Often\",\n  \"question_id\": \"q1\",\n  \"use_archetypes\": false\n}"
+            },
+            "url": "{{base_url}}/survey",
+            "description": "**Purpose:** One question, full response set returned immediately (sync).\n\n**Flow:** After population. Copy response survey_id to env for GET results, GET analytics, POST evaluate.\n\n**Input (body):** question (required), question_id, use_archetypes (default false), options[], current_events[].\n\n**Output (200):** survey_id, question, responses[{ agent_id, answer, sampled_option, distribution, demographics, lifestyle, error }], n_total."
+          }
+        },
+        {
+          "name": "GET /survey/:survey_id/results",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/survey/{{survey_id}}/results",
+            "description": "**Purpose:** Retrieve stored results for a survey (same as POST /survey response).\n\n**Flow:** Use survey_id from POST /survey (or env).\n\n**Input (path):** survey_id (required).\n\n**Output (200):** survey_id, question, responses, n_total. 404 if not found."
+          }
+        },
+        {
+          "name": "POST /survey/multi",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  var json = pm.response.json();",
+                  "  if (json.session_id) {",
+                  "    pm.collectionVariables.set('session_id', json.session_id);",
+                  "  }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"questions\": [\n    { \"question\": \"How often do you use delivery?\", \"question_id\": \"q1\" },\n    { \"question\": \"What influences your choice? Options: Price, Speed, Variety\", \"question_id\": \"q2\" }\n  ],\n  \"use_archetypes\": false,\n  \"social_influence_between_rounds\": true,\n  \"summarize_every\": 5\n}"
+            },
+            "url": "{{base_url}}/survey/multi",
+            "description": "**Purpose:** Start multi-question survey in background; returns session_id.\n\n**Flow:** 1) Call this → 2) Poll GET progress until status completed → 3) GET session results. Collection script sets session_id.\n\n**Input (body):** questions[{ question, question_id, options? }], use_archetypes, social_influence_between_rounds, summarize_every (1–50).\n\n**Output (200):** session_id, current_round, total_rounds, status (running|completed|failed), completed_questions[]."
+          }
+        },
+        {
+          "name": "GET /survey/session/:session_id/progress",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/survey/session/{{session_id}}/progress",
+            "description": "**Purpose:** Poll multi-survey progress.\n\n**Flow:** After POST /survey/multi; poll until status is \"completed\" then GET results.\n\n**Input (path):** session_id (from POST /survey/multi).\n\n**Output (200):** session_id, current_round, total_rounds, status, completed_questions[]."
+          }
+        },
+        {
+          "name": "GET /survey/session/:session_id/results",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/survey/session/{{session_id}}/results",
+            "description": "**Purpose:** Full results for completed multi-survey.\n\n**Flow:** Call when progress status is \"completed\".\n\n**Input (path):** session_id.\n\n**Output (200):** session_id, questions[], rounds[{ round_idx, question, question_id, responses, n_total, elapsed_seconds }], total_responses, elapsed_seconds, status. 409 if still running."
+          }
+        },
+        {
+          "name": "GET /survey/session/:session_id/round/:round_idx",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/survey/session/{{session_id}}/round/0",
+            "description": "**Purpose:** Results for one round of a multi-survey.\n\n**Flow:** After session completed; round_idx 0-based.\n\n**Input (path):** session_id, round_idx (int).\n\n**Output (200):** round_idx, question, question_id, responses[], n_total, elapsed_seconds."
+          }
+        }
+      ]
+    },
+    {
+      "name": "simulation",
+      "description": "**Simulation** – Run time steps, inject events, run scenarios (isolated or compared), causal graph and ATE. Requires population.",
+      "item": [
+        {
+          "name": "POST /simulation",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"days\": 30\n}" },
+            "url": "{{base_url}}/simulation",
+            "description": "**Purpose:** Run N days of simulation (events, social influence, state updates). Mutates global state.\n\n**Flow:** After population; optionally POST /simulation/events first.\n\n**Input (body):** days (int, 1–365, default 30).\n\n**Output (200):** status, days, n_agents. 400 if no population."
+          }
+        },
+        {
+          "name": "POST /simulation/events",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"day\": 1,\n  \"type\": \"price_change\",\n  \"payload\": { \"service\": \"delivery\", \"change_pct\": -10 },\n  \"district\": null\n}"
+            },
+            "url": "{{base_url}}/simulation/events",
+            "description": "**Purpose:** Schedule a world event for a future simulation run.\n\n**Input (body):** day (≥0), type (price_change|policy|infrastructure|market|new_service|new_metro_station), payload (object), district (optional).\n\n**Output (200):** status, event_type, day, pending_events."
+          }
+        },
+        {
+          "name": "GET /simulation/events",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/simulation/events",
+            "description": "**Purpose:** List pending events and global_params.\n\n**Output (200):** pending_events[], global_params."
+          }
+        },
+        {
+          "name": "GET /simulation/status",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/simulation/status",
+            "description": "**Purpose:** Current status.\n\n**Output (200):** population_size, social_graph_loaded, pending_events."
+          }
+        },
+        {
+          "name": "POST /simulation/scenario",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"baseline\",\n  \"days\": 30,\n  \"seed\": null,\n  \"events\": []\n}"
+            },
+            "url": "{{base_url}}/simulation/scenario",
+            "description": "**Purpose:** Run scenario in isolation (no global state change).\n\n**Input (body):** name, days, seed, events[{ day, type, payload, district }].\n\n**Output (200):** name, days, seed, population_size, dimension_means."
+          }
+        },
+        {
+          "name": "POST /simulation/scenario/compare",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"scenario_a\": { \"name\": \"A\", \"days\": 30, \"events\": [] },\n  \"scenario_b\": { \"name\": \"B\", \"days\": 30, \"events\": [{ \"day\": 5, \"type\": \"price_change\", \"payload\": {} }] }\n}"
+            },
+            "url": "{{base_url}}/simulation/scenario/compare",
+            "description": "**Purpose:** Run two scenarios, return diff of macro metrics.\n\n**Input (body):** scenario_a, scenario_b (same shape as POST /scenario).\n\n**Output (200):** Comparison object."
+          }
+        },
+        {
+          "name": "POST /simulation/scenario/run-with-survey",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"scenario\": { \"name\": \"post-event\", \"days\": 30, \"events\": [] },\n  \"questions\": [\"How satisfied are you with delivery? Options: Very, Somewhat, Not much\"]\n}"
+            },
+            "url": "{{base_url}}/simulation/scenario/run-with-survey",
+            "description": "**Purpose:** Run scenario then survey post-scenario population.\n\n**Input (body):** scenario, questions[] (min 1).\n\n**Output (200):** name, days, population_size, dimension_means, belief_means, survey_results, timeline."
+          }
+        },
+        {
+          "name": "POST /simulation/scenario/compare-with-survey",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"scenario_a\": { \"name\": \"A\", \"days\": 30, \"events\": [] },\n  \"scenario_b\": { \"name\": \"B\", \"days\": 30, \"events\": [] },\n  \"questions\": [\"Would you recommend delivery? Yes/No\"]\n}"
+            },
+            "url": "{{base_url}}/simulation/scenario/compare-with-survey",
+            "description": "**Purpose:** Run two scenarios, survey both, return comparison.\n\n**Input (body):** scenario_a, scenario_b, questions[]."
+          }
+        },
+        {
+          "name": "GET /simulation/causal/graph",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/simulation/causal/graph",
+            "description": "**Purpose:** Default causal graph (nodes, edges).\n\n**Output (200):** Graph structure."
+          }
+        },
+        {
+          "name": "POST /simulation/causal/do-intervention",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"intervention\": { \"price\": 0.8 },\n  \"observational\": {}\n}"
+            },
+            "url": "{{base_url}}/simulation/causal/do-intervention",
+            "description": "**Purpose:** Counterfactual do-intervention.\n\n**Input (body):** intervention (var→value), observational (optional).\n\n**Output (200):** counterfactual_values."
+          }
+        },
+        {
+          "name": "POST /simulation/causal/ate",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"treatment\": \"price\",\n  \"outcome\": \"satisfaction\",\n  \"confounders\": [],\n  \"treatment_value\": 1.0,\n  \"control_value\": 0.0\n}"
+            },
+            "url": "{{base_url}}/simulation/causal/ate",
+            "description": "**Purpose:** Estimate Average Treatment Effect.\n\n**Input (body):** treatment, outcome (strings), confounders[], treatment_value, control_value.\n\n**Output (200):** treatment, outcome, ate."
+          }
+        },
+        {
+          "name": "POST /simulation/causal/learn",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"timeline\": []\n}" },
+            "url": "{{base_url}}/simulation/causal/learn",
+            "description": "**Purpose:** Learn causal structure from timeline data.\n\n**Input (body):** timeline (array).\n\n**Output (200):** Learned graph."
+          }
+        }
+      ]
+    },
+    {
+      "name": "analytics",
+      "description": "**Analytics** – Segmented analytics and insights for a survey. Requires survey_id from a completed survey.",
+      "item": [
+        {
+          "name": "GET /analytics/:survey_id",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/analytics/{{survey_id}}?segment_by=location",
+              "host": ["{{base_url}}"],
+              "path": ["analytics", "{{survey_id}}"],
+              "query": [
+                { "key": "segment_by", "value": "location", "description": "location | income | nationality | age" }
+              ]
+            },
+            "description": "**Purpose:** Segmented response distributions and insight text for a survey.\n\n**Flow:** After POST /survey (or completed multi); set survey_id in path/env.\n\n**Input (path):** survey_id. **Query:** segment_by (location|income|nationality|age, default location).\n\n**Output (200):** survey_id, segment_by, aggregated (segment→{option→proportion}), insights[]. 404 if survey not found."
+          }
+        }
+      ]
+    },
+    {
+      "name": "evaluation",
+      "description": "**Evaluation** – Run realism, drift, consistency, similarity, optional LLM judge on survey responses. Requires population and survey with results.",
+      "item": [
+        {
+          "name": "POST /evaluate/:survey_id",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"run_judge\": false,\n  \"judge_sample\": 20,\n  \"realism_threshold\": 0.85,\n  \"drift_threshold\": 0.3,\n  \"run_similarity\": true,\n  \"similarity_threshold\": 0.9\n}"
+            },
+            "url": "{{base_url}}/evaluate/{{survey_id}}",
+            "description": "**Purpose:** Run evaluation framework on survey responses (realism, drift, consistency, distribution, narrative similarity, optional LLM judge).\n\n**Flow:** After population + survey with results; set survey_id in path.\n\n**Input (path):** survey_id. **Body:** run_judge, judge_sample, realism_threshold, drift_threshold, run_similarity, similarity_threshold.\n\n**Output (200):** population_realism, drift, consistency_score, distribution_validation, narrative_similarity, llm_judge, dashboard, quantitative_metrics, summary. 400 if no population or survey not found."
+          }
+        },
+        {
+          "name": "GET /evaluate/:evaluation_id/report",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/evaluate/{{survey_id}}/report",
+            "description": "**Purpose:** Retrieve stored evaluation report by ID (often same as survey_id).\n\n**Input (path):** evaluation_id.\n\n**Output (200):** Report object. 404 if not found."
+          }
+        }
+      ]
+    },
+    {
+      "name": "discovery",
+      "description": "**Discovery** – Domain auto-setup and dimension discovery from questions. No population required.",
+      "item": [
+        {
+          "name": "POST /discovery/domains/auto-setup",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"domain_name\": \"food_delivery\",\n  \"description\": \"Food delivery and preferences\",\n  \"sample_questions\": [\"How often do you order delivery?\"],\n  \"city_name\": \"Dubai\",\n  \"currency\": \"USD\",\n  \"reference_data\": null\n}"
+            },
+            "url": "{{base_url}}/discovery/domains/auto-setup",
+            "description": "**Purpose:** Create domain config under data/domains/<domain_id>/.\n\n**Input (body):** domain_name (required), description, sample_questions[], city_name, currency, reference_data.\n\n**Output (200):** domain_id, message."
+          }
+        },
+        {
+          "name": "POST /discovery/dimensions",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"questions\": [\"How often do you use delivery?\", \"What influences your choice?\"],\n  \"n_behavioral\": 12,\n  \"n_belief\": 7,\n  \"domain_id\": null,\n  \"save\": false\n}"
+            },
+            "url": "{{base_url}}/discovery/dimensions",
+            "description": "**Purpose:** Discover behavioral and belief dimensions from questions (e.g. via LLM). Optionally save to domain_id.\n\n**Input (body):** questions[] (min 1), n_behavioral (1–50), n_belief (1–30), domain_id, save (bool).\n\n**Output (200):** behavioral[], belief[] (name, description, representative_questions), question_to_dimension, saved."
+          }
+        }
+      ]
+    },
+    {
+      "name": "calibration",
+      "description": "**Calibration** – Fit factor weights to reference distributions; upload real data to get reference distribution. Auto-weights and fit require population.",
+      "item": [
+        {
+          "name": "POST /calibration/auto-weights",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"questions\": [\"How often do you order delivery?\"],\n  \"reference_distributions\": {\n    \"How often do you order delivery?\": { \"Never\": 0.1, \"Rarely\": 0.2, \"Sometimes\": 0.4, \"Often\": 0.2, \"Very Often\": 0.1 }\n  },\n  \"n_iterations\": 50,\n  \"seed\": 42\n}"
+            },
+            "url": "{{base_url}}/calibration/auto-weights",
+            "description": "**Purpose:** Optimize factor weights for multiple questions to match reference distributions.\n\n**Flow:** Population required. Optionally get reference_distributions from POST /calibration/upload-data.\n\n**Input (body):** questions[], reference_distributions (question→{option→proportion}), n_iterations (5–500), seed.\n\n**Output (200):** overall_loss, results[{ question, learned_weights, best_loss, converged }]. 400 if no population."
+          }
+        },
+        {
+          "name": "POST /calibration/fit",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"How often do you order delivery?\",\n  \"reference_distribution\": { \"Never\": 0.1, \"Rarely\": 0.2, \"Sometimes\": 0.4, \"Often\": 0.2, \"Very Often\": 0.1 },\n  \"demographics_cols\": null,\n  \"n_iterations\": 50\n}"
+            },
+            "url": "{{base_url}}/calibration/fit",
+            "description": "**Purpose:** Calibrate one question to a reference distribution.\n\n**Input (body):** question, reference_distribution (option→proportion), demographics_cols[], n_iterations (min 5).\n\n**Output (200):** question, learned_weights, best_loss, converged, n_iterations. 400 if no population."
+          }
+        },
+        {
+          "name": "POST /calibration/upload-data",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"How often do you order delivery?\",\n  \"responses\": [\"Sometimes\", \"Often\", \"Rarely\", \"Sometimes\"],\n  \"demographics\": null\n}"
+            },
+            "url": "{{base_url}}/calibration/upload-data",
+            "description": "**Purpose:** Upload real survey data; returns computed reference distribution for use in fit/auto-weights.\n\n**Input (body):** question, responses[] (required), demographics[] (optional).\n\n**Output (200):** question, n_responses, reference_distribution."
+          }
+        }
+      ]
+    }
+  ]
+}

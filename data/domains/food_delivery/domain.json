@@ -1,0 +1,58 @@
+{
+  "city_id": "food_delivery",
+  "city_name": "Dubai",
+  "currency": "USD",
+  "districts": [],
+  "nationalities": [],
+  "premium_areas": [],
+  "topic_keywords": {
+    "food_delivery": [
+      "delivery service",
+      "takeout",
+      "meal preferences",
+      "cuisine types",
+      "order frequency",
+      "delivery apps",
+      "customer reviews"
+    ]
+  },
+  "domain_keywords": {},
+  "services": {
+    "standard_delivery": 1,
+    "express_delivery": 0.8,
+    "meal_preference_suggestions": 0.9,
+    "subscription_service": 0.6
+  },
+  "price_levels": {},
+  "system_prompts": [
+    "What are your favorite cuisines for food delivery?",
+    "How often do you order delivery and what influences your choices?",
+    "Can you describe your ideal food delivery experience?"
+  ],
+  "archetype_hints": {},
+  "cultural_hints": {},
+  "frequency_interpretation": {},
+  "lifestyle_keywords": [
+    "busy lifestyle",
+    "convenience",
+    "health-conscious",
+    "budget-friendly",
+    "social dining",
+    "meal planning"
+  ],
+  "location_terms": [],
+  "discovered_dimensions": true,
+  "question_model_overrides": {
+    "question_text": {
+      "key": "how_often_order_delivery",
+      "scale": [
+        "Never",
+        "Rarely",
+        "Sometimes",
+        "Often",
+        "Always"
+      ],
+      "scale_type": "frequency"
+    }
+  }
+}

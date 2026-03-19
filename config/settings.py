@@ -202,6 +202,39 @@ class Settings(BaseSettings):
     validation_weight: float = Field(default=0.3, ge=0.0, le=1.0)
     social_lambda: float = Field(default=0.2, ge=0.0, le=1.0)
 
+    # --- Survey cognition (narrative hidden state, social, belief) ---
+    # Emergence test preset (run 20 agents, share % neutral, % balanced phrases, 5 extreme responses):
+    #   belief_nonlinearity = 6, social_damping = 0.2, entropy_floor_epsilon = 0.005,
+    #   neutral_penalty_when_competing_above = 0.3
+    survey_social_warmup_steps: int = Field(
+        default=1, ge=0, le=10,
+        description="Social diffusion steps before each survey (1 = light nudge, 3 = legacy)",
+    )
+    social_damping: float = Field(
+        default=0.5, ge=0.0, le=1.0,
+        description="Multiply social factor weight by this to avoid double-counting with diffusion",
+    )
+    belief_nonlinearity: float = Field(
+        default=0.0, ge=0.0, le=20.0,
+        description="Sigmoid steepness for belief_score (0 = linear, e.g. 6 = nonlinear)",
+    )
+    response_variability_std: float = Field(
+        default=0.0, ge=0.0, le=0.2,
+        description="Extra Gaussian jitter on raw_scores before softmax (0 = off)",
+    )
+    entropy_floor_epsilon: float = Field(
+        default=0.0, ge=0.0, le=0.1,
+        description="Add epsilon to each prob and renormalize to avoid extreme determinism (0 = off)",
+    )
+    media_weight_survey: float = Field(
+        default=0.05, ge=0.0, le=0.5,
+        description="Weight for real-time media belief update at survey time (when current_events provided)",
+    )
+    neutral_penalty_when_competing_above: float = Field(
+        default=0.0, ge=0.0, le=1.0,
+        description="When > 0, downweight neutral option if second-best prob > 0.4 (0 = off, e.g. 0.3 for emergence test)",
+    )
+
     # --- Research layer ---
     research_api_provider: str = Field(
         default="tavily", description="Web search provider: tavily | serpapi | none",

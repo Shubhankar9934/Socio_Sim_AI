@@ -106,8 +106,10 @@ def run_scenario(
     ``enable_social`` / ``enable_macro`` can be disabled for partial
     runs used in causal attribution.
     """
-    from simulation.engine import run_daily_step
+    from simulation.engine import run_daily_step, run_simulation
+    from social.network import normalize_adjacency, to_sparse_adjacency
     from agents.vectorized import build_trait_matrix, vectorized_macro_aggregation
+    import numpy as np
 
     agents_copy = copy.deepcopy(agents)
     scheduler = _build_scheduler(scenario)
@@ -116,16 +118,35 @@ def run_scenario(
     timeline: List[Dict[str, Any]] = []
 
     if collect_timeline:
+        # Match run_simulation setup: adjacency, RNG, activation_state, cooldown_topics
+        adj_norm = None
+        sparse_adj = None
+        if social_graph is not None:
+            sparse_adj = to_sparse_adjacency(social_graph)
+            adj_norm = normalize_adjacency(sparse_adj)
+        life_rng = np.random.default_rng(config.derive_child_seed("life_events"))
+        activation_state = {
+            "activation": np.zeros(len(agents_copy)),
+            "activation_prev": np.zeros(len(agents_copy)),
+        }
+        cooldown_topics = {}
         for day in range(1, scenario.days + 1):
             run_daily_step(
-                agents_copy, day=day, social_graph=social_graph,
-                scheduler=scheduler, config=config,
-                enable_social=enable_social, enable_macro=enable_macro,
+                agents_copy,
+                social_graph,
+                scheduler,
+                day,
+                adj_norm=adj_norm,
+                sparse_adj=sparse_adj,
+                enable_social=enable_social,
+                enable_macro=enable_macro,
+                life_rng=life_rng,
+                activation_state=activation_state,
+                cooldown_topics=cooldown_topics,
             )
             if day % max(1, scenario.days // 10) == 0 or day == scenario.days:
                 timeline.append(_snapshot(agents_copy, day))
     else:
-        from simulation.engine import run_simulation
         run_simulation(
             agents_copy, days=scenario.days, social_graph=social_graph,
             scheduler=scheduler, config=config,

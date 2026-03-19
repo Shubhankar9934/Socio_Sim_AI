@@ -10,6 +10,16 @@ nav:
   - Overview: overview.md
   - Architecture: architecture.md
   - Root Scripts: root-scripts.md
+  - JADU API reference (Postman):
+      - Index: jadu-api/README.md
+      - Population: jadu-api/population.md
+      - Agents: jadu-api/agents.md
+      - Survey: jadu-api/survey.md
+      - Simulation: jadu-api/simulation.md
+      - Analytics: jadu-api/analytics.md
+      - Evaluation: jadu-api/evaluation.md
+      - Discovery: jadu-api/discovery.md
+      - Calibration: jadu-api/calibration.md
   - Module Reference:
     - Agents: modules/agents.md
     - Analytics: modules/analytics.md

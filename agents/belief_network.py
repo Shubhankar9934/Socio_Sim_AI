@@ -147,7 +147,9 @@ class BeliefNetwork:
             setattr(self, d, float(updated[i]))
 
     def belief_score(self, dimension_weights: Dict[str, float]) -> float:
-        """Weighted combination of relevant belief dimensions -> single 0-1 score."""
+        """Weighted combination of relevant belief dimensions -> single 0-1 score.
+        When belief_nonlinearity > 0, applies sigmoid for non-linear, thresholded effect.
+        """
         score = 0.0
         total = 0.0
         for dim, w in dimension_weights.items():
@@ -156,7 +158,16 @@ class BeliefNetwork:
             total += abs(w)
         if total == 0:
             return 0.5
-        return _clamp(score / total)
+        raw = _clamp(score / total)
+        try:
+            from config.settings import get_settings
+            k = getattr(get_settings(), "belief_nonlinearity", 0.0)
+        except Exception:
+            k = 0.0
+        if k <= 0:
+            return raw
+        sigmoid = 1.0 / (1.0 + np.exp(-k * (raw - 0.5)))
+        return float(_clamp(sigmoid))
 
 
 def init_beliefs_from_persona(

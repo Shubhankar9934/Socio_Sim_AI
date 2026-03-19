@@ -34,9 +34,14 @@ FACTOR_REGISTRY = {
 
 def build_factor_graph(model: "QuestionModel") -> FactorGraph:
     """Assemble a FactorGraph from a QuestionModel's factor_weights."""
+    from config.settings import get_settings
+    settings = get_settings()
+    social_damping = getattr(settings, "social_damping", 0.5)
     graph = FactorGraph()
     for name, weight in model.factor_weights.items():
         fn = FACTOR_REGISTRY.get(name)
         if fn is not None:
+            if name == "social":
+                weight = weight * social_damping
             graph.add_factor(fn, weight)
     return graph
