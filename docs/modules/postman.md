@@ -7,6 +7,7 @@ API testing with Postman collections and environment.
 | File | Description |
 |------|-------------|
 | `Socio_Sim_AI_Surveys.postman_collection.json` | Postman collection with requests for population generation, single-question surveys, multi-survey, analytics, evaluation. |
+| `JADU_Full_API.postman_collection.json` | Broader API surface (align with [jadu-api/README.md](../jadu-api/README.md)). WebSocket flows need a WS client (Postman or other); see [websockets.md](../jadu-api/websockets.md). |
 | `Socio_Sim_AI.postman_environment.json` | Environment variables (e.g. base_url, api_key). |
 | `README.md` | Setup and usage: start API, import collection and environment, run requests. |
 
@@ -15,4 +16,4 @@ API testing with Postman collections and environment.
 1. Start API: `python main.py run`
 2. Import into Postman: Collection + Environment
 3. One question at a time: POST /survey with question, question_id, use_archetypes
-4. Multi-survey: POST /survey/multi for batch; poll /session/{id}/progress
+4. Multi-survey: POST /survey/multi for batch; poll `GET /survey/session/{id}/progress` or subscribe to `WS /ws/survey/{session_id}`

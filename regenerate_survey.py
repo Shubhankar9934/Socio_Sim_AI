@@ -78,6 +78,7 @@ async def regenerate(n: int = 500):
 
     question = "How often do you order food delivery?"
     question_id = str(uuid.uuid4())
+    batch_run_id = str(uuid.uuid4())
 
     print(f"\nRunning survey: '{question}'")
     print(f"Agents: {n}, with social warmup + memory + style profiles...")
@@ -94,6 +95,7 @@ async def regenerate(n: int = 500):
         think_fn=None,
         use_archetypes=False,
         max_concurrent=20,
+        survey_run_id=batch_run_id,
     )
 
     elapsed = time.time() - t0
@@ -102,6 +104,7 @@ async def regenerate(n: int = 500):
     survey_id = str(uuid.uuid4())
     output = {
         "survey_id": survey_id,
+        "survey_run_id": batch_run_id,
         "question": question,
         "responses": responses,
         "n_total": len(responses),

@@ -9,7 +9,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from evaluation.consistency import consistency_score_from_responses
+from evaluation.consistency import consistency_report_from_responses
 from evaluation.distribution_validation import validate_survey_distribution
 from evaluation.drift import drift_report
 from evaluation.realism import compute_realism_report
@@ -36,6 +36,7 @@ async def run_evaluation(
     run_similarity: bool = True,
     similarity_threshold: float = 0.9,
     reference_distribution: Optional[Dict[str, float]] = None,
+    question_model_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     survey_responses: list of {agent_id, answer, ...} for the survey.
@@ -80,13 +81,20 @@ async def run_evaluation(
                         break
             if qid_responses:
                 response_sets.append(qid_responses)
-        report["consistency_score"] = consistency_score_from_responses(response_sets, agent_ids)
+        consistency_report = consistency_report_from_responses(response_sets, agent_ids)
+        report["consistency_score"] = consistency_report["consistency_score"]
+        report["consistency_valid"] = consistency_report["consistency_valid"]
     else:
         report["consistency_score"] = 1.0
+        report["consistency_valid"] = False
 
     # --- Distribution validation ---
     dist_validation = validate_survey_distribution(
-        survey_responses, reference=reference_distribution,
+        survey_responses,
+        reference=reference_distribution,
+        question_model_key=question_model_key or (
+            survey_responses[0].get("question_model_key") if survey_responses else None
+        ),
     )
     report["distribution_validation"] = dist_validation
 

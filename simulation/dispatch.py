@@ -51,10 +51,15 @@ class EventDispatcher:
 async def _handle_survey_question(
     event: "SimEvent", engine: "AgentCognitiveEngine",
 ) -> Optional[Dict[str, Any]]:
+    """Survey events should set ``option_labels`` when the turn has discrete choices (any scale type)."""
     payload = event.payload or {}
+    ol = payload.get("option_labels")
+    if ol is not None and not isinstance(ol, list):
+        ol = None
     return await engine.think(
         payload.get("question", ""),
         payload.get("question_id", ""),
+        option_labels=ol,
     )
 
 

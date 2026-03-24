@@ -42,6 +42,7 @@ class SurveyEngineConfig:
     recluster_every: int = 10
     archetype_aggregation: str = "median"
     narrative_templates_per_archetype: int = 3
+    diagnostics_enabled: bool = False
 
 
 # ------------------------------------------------------------------
@@ -69,6 +70,8 @@ class SurveySessionResult:
     total_responses: int = 0
     elapsed_seconds: float = 0.0
     status: str = "completed"
+    session_metrics: Optional[Dict[str, Any]] = None
+    population_health: Optional[Dict[str, str]] = None
 
 
 # ------------------------------------------------------------------
@@ -115,6 +118,18 @@ class SurveyEngine:
         self._labels: Optional[List[int]] = None
         self._prev_centroids: Optional[np.ndarray] = None
         self._prev_inertia: Optional[float] = None
+        self._metrics_collector: Optional[Any] = None
+        self._coordinator: Optional[Any] = None
+        try:
+            from evaluation.runtime_metrics import MetricsCollector
+            self._metrics_collector = MetricsCollector()
+        except ImportError:
+            pass
+        try:
+            from simulation.coordinator import SimulationCoordinator
+            self._coordinator = SimulationCoordinator()
+        except ImportError:
+            pass
 
     # ------------------------------------------------------------------
     # Public API
@@ -144,6 +159,7 @@ class SurveyEngine:
         SurveySessionResult
         """
         session_id = str(uuid.uuid4())
+        self._survey_run_id = session_id
         total_rounds = len(questions)
         t0 = time.monotonic()
 
@@ -246,6 +262,12 @@ class SurveyEngine:
             total_responses += len(round_result.responses)
             self._session_progress["completed_questions"].append(question_id)
 
+            # Runtime metrics + population health
+            if self._metrics_collector is not None:
+                self._metrics_collector.record_round(round_result.responses)
+            if self._coordinator is not None:
+                self._coordinator.enforce_distribution_health(round_result.responses)
+
             await self._emit_progress(
                 round_idx, total_rounds, session_id,
                 question_text, round_result.responses,
@@ -261,6 +283,11 @@ class SurveyEngine:
                 and (round_idx + 1) % self.config.summarize_every == 0
             ):
                 self._summarize_all_memories()
+
+            from config.settings import get_settings as _gs
+            if getattr(_gs(), "enable_life_events_between_rounds", True):
+                self._apply_life_events_between_rounds(round_idx)
+
             # Also drain any world events on the external scheduler
             if self.event_scheduler is not None:
                 await self.event_scheduler.process_until_async(
@@ -278,12 +305,32 @@ class SurveyEngine:
         elapsed = time.monotonic() - t0
         self._session_progress["status"] = "completed"
 
+        _metrics_snapshot = None
+        if self._metrics_collector is not None:
+            try:
+                from dataclasses import asdict
+                _metrics_snapshot = asdict(self._metrics_collector.snapshot())
+            except Exception:
+                pass
+
+        _pop_health = None
+        if self._coordinator is not None and rounds:
+            try:
+                all_resps = []
+                for rr in rounds:
+                    all_resps.extend(rr.responses)
+                _pop_health = self._coordinator.compute_population_health(all_resps)
+            except Exception:
+                pass
+
         return SurveySessionResult(
             session_id=session_id,
             questions=[rq["question"] for rq in resolved_questions],
             rounds=rounds,
             total_responses=total_responses,
             elapsed_seconds=round(elapsed, 2),
+            session_metrics=_metrics_snapshot,
+            population_health=_pop_health,
         )
 
     def get_progress(self) -> Dict[str, Any]:
@@ -301,7 +348,15 @@ class SurveyEngine:
         round_idx: int,
         options: Optional[List[str]] = None,
     ) -> RoundResult:
+        from agents.intent_router import strip_survey_options_if_qualitative
+
+        options = strip_survey_options_if_qualitative(question, options)
         t0 = time.monotonic()
+        run_ns = str(getattr(self, "_survey_run_id", "") or "")
+        for a in self.agents:
+            st = a.get("state")
+            if st is not None:
+                st.survey_run_id = run_ns
 
         if self._archetype_states is not None and self._labels is not None:
             from simulation.archetype_runner import run_archetype_round
@@ -324,6 +379,7 @@ class SurveyEngine:
                 noise_std=self.config.archetype_noise_std,
                 narrative_budget=self.config.narrative_budget,
                 narrative_templates_per_archetype=self.config.narrative_templates_per_archetype,
+                diagnostics_enabled=self.config.diagnostics_enabled,
             )
         else:
             responses = await run_survey(
@@ -334,6 +390,8 @@ class SurveyEngine:
                 think_fn=None,
                 use_archetypes=self.config.use_archetypes,
                 max_concurrent=self.config.max_concurrent,
+                diagnostics_enabled=self.config.diagnostics_enabled,
+                survey_run_id=run_ns,
             )
 
         elapsed = time.monotonic() - t0
@@ -507,6 +565,29 @@ class SurveyEngine:
             state = a.get("state")
             if state and hasattr(state, "summarize_memory"):
                 state.summarize_memory()
+
+    def _apply_life_events_between_rounds(self, round_idx: int) -> None:
+        """Sample and apply life events for each agent between survey rounds.
+
+        This provides temporal evolution: agents can experience promotions,
+        moves, health events, etc. that update their latent state and beliefs.
+        """
+        try:
+            from world.life_events import sample_life_events, apply_life_event
+        except ImportError:
+            return
+        for a in self.agents:
+            state = a.get("state")
+            persona = a.get("persona")
+            if state is None or persona is None:
+                continue
+            try:
+                events = sample_life_events(persona, current_day=getattr(state, "current_day", 0))
+                for le in events:
+                    apply_life_event(state, le)
+                    state.life_event_history.append(le if isinstance(le, dict) else {"event": str(le)})
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Private: progress emission

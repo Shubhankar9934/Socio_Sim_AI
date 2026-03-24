@@ -8,8 +8,20 @@ from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel, Field
 
 from api.state import agents_store
+from agents.perception import detect_question_model, perceive
 
 router = APIRouter(prefix="/calibration", tags=["calibration"])
+
+
+def _interpret_weight(weight: float) -> str:
+    w = abs(float(weight))
+    if w >= 0.35:
+        return "strong influence on decision"
+    if w >= 0.20:
+        return "moderate influence on decision"
+    if w >= 0.08:
+        return "light influence on decision"
+    return "minimal influence on decision"
 
 
 class AutoWeightsRequest(BaseModel):
@@ -33,12 +45,23 @@ async def auto_weights(req: AutoWeightsRequest) -> Dict[str, Any]:
         reference_distributions=req.reference_distributions,
         agents=agents_store,
     )
+    from config.calibrated_weights import set_calibrated_weights
+
+    for r in result.results:
+        model_key = detect_question_model(perceive(r.question)).name
+        set_calibrated_weights(model_key, r.learned_weights)
     return {
         "overall_loss": result.overall_loss,
+        "calibration_provenance": {
+            "n_iterations": req.n_iterations,
+            "seed": req.seed,
+            "persisted_runtime_overrides": True,
+        },
         "results": [
             {
                 "question": r.question,
                 "learned_weights": r.learned_weights,
+                "interpretation": {k: _interpret_weight(v) for k, v in r.learned_weights.items()},
                 "best_loss": r.best_loss,
                 "converged": r.converged,
             }
@@ -68,12 +91,20 @@ async def fit_calibration(req: FitRequest) -> Dict[str, Any]:
         reference_distribution=req.reference_distribution,
         agents=agents_store,
     )
+    from config.calibrated_weights import set_calibrated_weights
+    model_key = detect_question_model(perceive(wr.question)).name
+    set_calibrated_weights(model_key, wr.learned_weights)
     return {
         "question": wr.question,
         "learned_weights": wr.learned_weights,
+        "interpretation": {k: _interpret_weight(v) for k, v in wr.learned_weights.items()},
         "best_loss": wr.best_loss,
         "converged": wr.converged,
         "n_iterations": wr.n_iterations,
+        "calibration_provenance": {
+            "seed": learner.seed,
+            "persisted_runtime_overrides": True,
+        },
     }
 
 

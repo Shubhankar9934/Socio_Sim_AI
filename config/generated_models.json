@@ -1,0 +1,738 @@
+{
+  "constraints": {
+    "ai_integration_in_design": [],
+    "ai_integration_workflow": [],
+    "commute_switch_public_transit": [],
+    "commute_switching_toll": [],
+    "delivery_usage_frequency": [],
+    "exercise_intent": [
+      {
+        "filters": {
+          "income": "low",
+          "location": "rural"
+        },
+        "option": "Very likely",
+        "question_model_key": "exercise_intent",
+        "severity": "hard",
+        "source": "adaptive"
+      },
+      {
+        "filters": {
+          "income": "low",
+          "location": "rural"
+        },
+        "option": "Likely",
+        "question_model_key": "exercise_intent",
+        "severity": "hard",
+        "source": "adaptive"
+      },
+      {
+        "filters": {
+          "personality": "introverted"
+        },
+        "option": "Very likely",
+        "question_model_key": "exercise_intent",
+        "severity": "hard",
+        "source": "adaptive"
+      },
+      {
+        "filters": {
+          "personality": "introverted"
+        },
+        "option": "Likely",
+        "question_model_key": "exercise_intent",
+        "severity": "hard",
+        "source": "adaptive"
+      },
+      {
+        "filters": {
+          "personality": "introverted"
+        },
+        "option": "Neutral",
+        "question_model_key": "exercise_intent",
+        "severity": "hard",
+        "source": "adaptive"
+      }
+    ],
+    "food_habit_adjustment": [],
+    "internet_service_satisfaction": [],
+    "internet_service_usage": [],
+    "internet_usage_frequency": [],
+    "neighborhood_safety_perception": [],
+    "relocation_intent": [],
+    "relocation_intent_dubai": [],
+    "relocation_likelihood": [],
+    "survey_model_1": [
+      {
+        "filters": {
+          "age": "18-25",
+          "income": "low"
+        },
+        "option": "Very Unsatisfied",
+        "question_model_key": "survey_model_1",
+        "severity": "hard",
+        "source": "adaptive"
+      },
+      {
+        "filters": {
+          "age": "18-25",
+          "income": "low"
+        },
+        "option": "Unsatisfied",
+        "question_model_key": "survey_model_1",
+        "severity": "hard",
+        "source": "adaptive"
+      },
+      {
+        "filters": {
+          "location": "urban",
+          "occupation": "student"
+        },
+        "option": "Very Satisfied",
+        "question_model_key": "survey_model_1",
+        "severity": "hard",
+        "source": "adaptive"
+      }
+    ]
+  },
+  "models": {
+    "ai_integration_in_design": {
+      "dimension_weights": {},
+      "dominant_factors": [
+        "behavioral",
+        "belief",
+        "location",
+        "income"
+      ],
+      "factor_weights": {
+        "behavioral": 0.22,
+        "belief": 0.22,
+        "income": 0.22,
+        "location": 0.22,
+        "memory": 0.04,
+        "personality": 0.04,
+        "social": 0.04
+      },
+      "name": "ai_integration_in_design",
+      "narrative_guidance": {
+        "Completely opposed - I strictly rely on traditional drafting and human-driven processes": "Strongly traditionalist",
+        "Experimenting - I use them occasionally for initial brainstorming or mood boards": "Open to innovation",
+        "Highly dependent - My entire pipeline from spatial layout to final render relies heavily on AI": "Fully embracing technology",
+        "Integrated - They are a regular part of my concept generation and planning process": "Comfortably adaptive",
+        "Unlikely to adopt soon - I have tried them, but they lack the precision I need": "Cautiously skeptical"
+      },
+      "scale": [
+        "Completely opposed - I strictly rely on traditional drafting and human-driven processes",
+        "Unlikely to adopt soon - I have tried them, but they lack the precision I need",
+        "Experimenting - I use them occasionally for initial brainstorming or mood boards",
+        "Integrated - They are a regular part of my concept generation and planning process",
+        "Highly dependent - My entire pipeline from spatial layout to final render relies heavily on AI"
+      ],
+      "semantic_profile": "lifestyle_frequency",
+      "source": "adaptive",
+      "temperature": 1.0
+    },
+    "ai_integration_workflow": {
+      "dimension_weights": {},
+      "dominant_factors": [
+        "behavioral",
+        "belief",
+        "location",
+        "income"
+      ],
+      "factor_weights": {
+        "behavioral": 0.22,
+        "belief": 0.22,
+        "income": 0.22,
+        "location": 0.22,
+        "memory": 0.04,
+        "personality": 0.04,
+        "social": 0.04
+      },
+      "name": "ai_integration_workflow",
+      "narrative_guidance": {
+        "Completely opposed - I strictly rely on traditional drafting and human-driven processes": "Strongly traditionalist",
+        "Experimenting - I use them occasionally for initial brainstorming or mood boards": "Open to innovation",
+        "Highly dependent - My entire pipeline from spatial layout to final render relies heavily on AI": "Fully embracing technology",
+        "Integrated - They are a regular part of my concept generation and planning process": "Comfortably adaptive",
+        "Unlikely to adopt soon - I have tried them, but they lack the precision I need": "Cautiously skeptical"
+      },
+      "scale": [
+        "Completely opposed - I strictly rely on traditional drafting and human-driven processes",
+        "Unlikely to adopt soon - I have tried them, but they lack the precision I need",
+        "Experimenting - I use them occasionally for initial brainstorming or mood boards",
+        "Integrated - They are a regular part of my concept generation and planning process",
+        "Highly dependent - My entire pipeline from spatial layout to final render relies heavily on AI"
+      ],
+      "semantic_profile": "lifestyle_frequency",
+      "source": "adaptive",
+      "temperature": 1.0
+    },
+    "commute_switch_public_transit": {
+      "dimension_weights": {},
+      "dominant_factors": [
+        "behavioral",
+        "belief",
+        "location"
+      ],
+      "factor_weights": {
+        "behavioral": 0.28,
+        "belief": 0.28,
+        "income": 0.04000000000000001,
+        "location": 0.28,
+        "memory": 0.04000000000000001,
+        "personality": 0.04000000000000001,
+        "social": 0.04000000000000001
+      },
+      "name": "commute_switch_public_transit",
+      "narrative_guidance": {
+        "Highly likely - I will completely switch to public transit, or I already use it": "Environmentally conscious and committed to change.",
+        "Highly unlikely - I will just pay the toll and continue driving during peak hours": "Pragmatic and resistant to change.",
+        "Likely - I will start taking public transit a few days a week to save money": "Proactive and cost-conscious.",
+        "Undecided/Exploring options - I need to calculate the costs and see how bad the traffic gets first": "Analytical and weighing options.",
+        "Unlikely - I will keep driving but try to shift my work schedule to avoid the toll window": "Cautious but open to adjustments."
+      },
+      "scale": [
+        "Highly unlikely - I will just pay the toll and continue driving during peak hours",
+        "Unlikely - I will keep driving but try to shift my work schedule to avoid the toll window",
+        "Undecided/Exploring options - I need to calculate the costs and see how bad the traffic gets first",
+        "Likely - I will start taking public transit a few days a week to save money",
+        "Highly likely - I will completely switch to public transit, or I already use it"
+      ],
+      "semantic_profile": "policy_opinion",
+      "source": "adaptive",
+      "temperature": 1.0
+    },
+    "commute_switching_toll": {
+      "dimension_weights": {},
+      "dominant_factors": [
+        "behavioral",
+        "belief",
+        "location"
+      ],
+      "factor_weights": {
+        "behavioral": 0.28,
+        "belief": 0.28,
+        "income": 0.04000000000000001,
+        "location": 0.28,
+        "memory": 0.04000000000000001,
+        "personality": 0.04000000000000001,
+        "social": 0.04000000000000001
+      },
+      "name": "commute_switching_toll",
+      "narrative_guidance": {
+        "Highly likely - I will completely switch to public transit, or I already use it": "Environmentally conscious and committed to change.",
+        "Highly unlikely - I will just pay the toll and continue driving during peak hours": "Pragmatic and resistant to change.",
+        "Likely - I will start taking public transit a few days a week to save money": "Proactive and cost-conscious.",
+        "Undecided/Exploring options - I need to calculate the costs and see how bad the traffic gets first": "Analytical and weighing options.",
+        "Unlikely - I will keep driving but try to shift my work schedule to avoid the toll window": "Cautious but open to adjustments."
+      },
+      "scale": [
+        "Highly unlikely - I will just pay the toll and continue driving during peak hours",
+        "Unlikely - I will keep driving but try to shift my work schedule to avoid the toll window",
+        "Undecided/Exploring options - I need to calculate the costs and see how bad the traffic gets first",
+        "Likely - I will start taking public transit a few days a week to save money",
+        "Highly likely - I will completely switch to public transit, or I already use it"
+      ],
+      "semantic_profile": "policy_opinion",
+      "source": "adaptive",
+      "temperature": 1.0
+    },
+    "delivery_usage_frequency": {
+      "dimension_weights": {},
+      "dominant_factors": [
+        "behavioral",
+        "income",
+        "location"
+      ],
+      "factor_weights": {
+        "behavioral": 0.28,
+        "belief": 0.04000000000000001,
+        "income": 0.28,
+        "location": 0.28,
+        "memory": 0.04000000000000001,
+        "personality": 0.04000000000000001,
+        "social": 0.04000000000000001
+      },
+      "name": "delivery_usage_frequency",
+      "narrative_guidance": {
+        "Always": "Delivery is likely a staple in your routine.",
+        "Never": "Consider if you prefer cooking at home.",
+        "Often": "You might enjoy the convenience of delivery frequently.",
+        "Rarely": "Think about your occasional use of delivery services.",
+        "Sometimes": "Reflect on your balanced approach to delivery."
+      },
+      "scale": [
+        "Never",
+        "Rarely",
+        "Sometimes",
+        "Often",
+        "Always"
+      ],
+      "semantic_profile": "lifestyle_frequency",
+      "source": "adaptive",
+      "temperature": 1.0
+    },
+    "exercise_intent": {
+      "dimension_weights": {},
+      "factor_weights": {
+        "behavioral": 0.28,
+        "belief": 0.28,
+        "income": 0.04000000000000001,
+        "location": 0.04000000000000001,
+        "memory": 0.04000000000000001,
+        "personality": 0.04000000000000001,
+        "social": 0.28
+      },
+      "name": "exercise_intent",
+      "scale": [
+        "Very unlikely",
+        "Unlikely",
+        "Neutral",
+        "Likely",
+        "Very likely"
+      ],
+      "source": "adaptive",
+      "temperature": 1.0
+    },
+    "food_habit_adjustment": {
+      "dimension_weights": {},
+      "dominant_factors": [
+        "income",
+        "behavioral",
+        "location"
+      ],
+      "factor_weights": {
+        "behavioral": 0.28,
+        "belief": 0.04000000000000001,
+        "income": 0.28,
+        "location": 0.28,
+        "memory": 0.04000000000000001,
+        "personality": 0.04000000000000001,
+        "social": 0.04000000000000001
+      },
+      "name": "food_habit_adjustment",
+      "narrative_guidance": {
+        "Exploring alternatives - I will start bulk-buying, hunting for weekly discounts, and switching to cheaper local grocery brands": "Practical and resourceful",
+        "Extreme shift - I am completely overhauling my diet to bare essentials and relying on the absolute cheapest subsidized food options available": "Survival mode",
+        "Minor adjustments - I will maintain my grocery list but completely cut out dining out or delivery apps to balance the budget": "Budget-conscious",
+        "No change - I will absorb the extra cost; food quality/diet is a non-negotiable priority for me": "Prioritize quality",
+        "Significant shift - I will drastically reduce expensive items like meat/organic produce and shift to cheaper staple carbs like rice, lentils, and pasta": "Cost-effective"
+      },
+      "scale": [
+        "No change - I will absorb the extra cost; food quality/diet is a non-negotiable priority for me",
+        "Minor adjustments - I will maintain my grocery list but completely cut out dining out or delivery apps to balance the budget",
+        "Exploring alternatives - I will start bulk-buying, hunting for weekly discounts, and switching to cheaper local grocery brands",
+        "Significant shift - I will drastically reduce expensive items like meat/organic produce and shift to cheaper staple carbs like rice, lentils, and pasta",
+        "Extreme shift - I am completely overhauling my diet to bare essentials and relying on the absolute cheapest subsidized food options available"
+      ],
+      "semantic_profile": "lifestyle_frequency",
+      "source": "adaptive",
+      "temperature": 1.0
+    },
+    "internet_service_satisfaction": {
+      "dimension_weights": {},
+      "dominant_factors": [
+        "behavioral",
+        "belief",
+        "location"
+      ],
+      "factor_weights": {
+        "behavioral": 0.28,
+        "belief": 0.28,
+        "income": 0.04000000000000001,
+        "location": 0.28,
+        "memory": 0.04000000000000001,
+        "personality": 0.04000000000000001,
+        "social": 0.04000000000000001
+      },
+      "name": "internet_service_satisfaction",
+      "narrative_guidance": {
+        "1 (Very dissatisfied)": "Express strong dissatisfaction.",
+        "2 (Dissatisfied)": "Indicate some level of dissatisfaction.",
+        "3 (Neutral)": "Show neutrality.",
+        "4 (Satisfied)": "Convey satisfaction.",
+        "5 (Very satisfied)": "Express strong satisfaction."
+      },
+      "scale": [
+        "1 (Very dissatisfied)",
+        "2 (Dissatisfied)",
+        "3 (Neutral)",
+        "4 (Satisfied)",
+        "5 (Very satisfied)"
+      ],
+      "semantic_profile": "lifestyle_frequency",
+      "source": "adaptive",
+      "temperature": 1.0
+    },
+    "internet_service_usage": {
+      "dimension_weights": {},
+      "dominant_factors": [
+        "behavioral",
+        "location",
+        "income"
+      ],
+      "factor_weights": {
+        "behavioral": 0.28,
+        "belief": 0.04000000000000001,
+        "income": 0.28,
+        "location": 0.28,
+        "memory": 0.04000000000000001,
+        "personality": 0.04000000000000001,
+        "social": 0.04000000000000001
+      },
+      "name": "internet_service_usage",
+      "narrative_guidance": {
+        "Always": "Consider your dependence on internet services.",
+        "Never": "Consider if you have access to the internet.",
+        "Often": "Evaluate how frequently you rely on the internet.",
+        "Rarely": "Think about your internet usage habits.",
+        "Sometimes": "Reflect on your typical internet usage."
+      },
+      "scale": [
+        "Never",
+        "Rarely",
+        "Sometimes",
+        "Often",
+        "Always"
+      ],
+      "semantic_profile": "lifestyle_frequency",
+      "source": "adaptive",
+      "temperature": 1.0
+    },
+    "internet_usage_frequency": {
+      "dimension_weights": {},
+      "dominant_factors": [
+        "behavioral",
+        "location",
+        "social"
+      ],
+      "factor_weights": {
+        "behavioral": 0.28,
+        "belief": 0.04000000000000001,
+        "income": 0.04000000000000001,
+        "location": 0.28,
+        "memory": 0.04000000000000001,
+        "personality": 0.04000000000000001,
+        "social": 0.28
+      },
+      "name": "internet_usage_frequency",
+      "narrative_guidance": {
+        "Always": "Is it a necessity for you?",
+        "Never": "Consider if you have access.",
+        "Often": "How integral is it to your routine?",
+        "Rarely": "Think about your usage habits.",
+        "Sometimes": "Reflect on your typical week."
+      },
+      "scale": [
+        "Never",
+        "Rarely",
+        "Sometimes",
+        "Often",
+        "Always"
+      ],
+      "semantic_profile": "lifestyle_frequency",
+      "source": "adaptive",
+      "temperature": 1.0
+    },
+    "neighborhood_safety_perception": {
+      "dimension_weights": {},
+      "dominant_factors": [
+        "location",
+        "income",
+        "belief",
+        "behavioral"
+      ],
+      "factor_weights": {
+        "behavioral": 0.16,
+        "belief": 0.18,
+        "income": 0.18,
+        "location": 0.24,
+        "memory": 0.04,
+        "personality": 0.12,
+        "social": 0.08
+      },
+      "name": "neighborhood_safety_perception",
+      "narrative_guidance": {
+        "1 (Very unsafe)": "Expresses high concern and fear.",
+        "2": "Shows moderate concern.",
+        "3": "Neutral stance on safety.",
+        "4": "Feels relatively safe.",
+        "5 (Very safe)": "Confident and secure."
+      },
+      "scale": [
+        "1 (Very unsafe)",
+        "2",
+        "3",
+        "4",
+        "5 (Very safe)"
+      ],
+      "semantic_profile": "safety_perception",
+      "source": "adaptive",
+      "temperature": 1.0
+    },
+    "relocation_intent": {
+      "dimension_weights": {},
+      "dominant_factors": [
+        "location",
+        "income",
+        "behavioral"
+      ],
+      "factor_weights": {
+        "behavioral": 0.28,
+        "belief": 0.04000000000000001,
+        "income": 0.28,
+        "location": 0.28,
+        "memory": 0.04000000000000001,
+        "personality": 0.04000000000000001,
+        "social": 0.04000000000000001
+      },
+      "name": "relocation_intent",
+      "narrative_guidance": {
+        "Likely": "Considering a move for better value.",
+        "Undecided/Exploring options": "Open to possibilities.",
+        "Unlikely": "Preference for central but considering options.",
+        "Very likely - I am actively planning to move outward for better value": "Ready to make a change.",
+        "Very unlikely - I will pay the premium to stay central": "Strong attachment to central living."
+      },
+      "scale": [
+        "Very unlikely - I will pay the premium to stay central",
+        "Unlikely",
+        "Undecided/Exploring options",
+        "Likely",
+        "Very likely - I am actively planning to move outward for better value"
+      ],
+      "semantic_profile": "economic_pressure",
+      "source": "adaptive",
+      "temperature": 1.0
+    },
+    "relocation_intent_dubai": {
+      "dimension_weights": {},
+      "dominant_factors": [
+        "location",
+        "income",
+        "behavioral"
+      ],
+      "factor_weights": {
+        "behavioral": 0.28,
+        "belief": 0.04000000000000001,
+        "income": 0.28,
+        "location": 0.28,
+        "memory": 0.04000000000000001,
+        "personality": 0.04000000000000001,
+        "social": 0.04000000000000001
+      },
+      "name": "relocation_intent_dubai",
+      "narrative_guidance": {
+        "Likely": "Serious about moving.",
+        "Undecided/Exploring options": "Open to possibilities.",
+        "Unlikely": "Some consideration but not serious.",
+        "Very likely - I am actively planning to move outward for better value": "Committed to finding better options.",
+        "Very unlikely - I will pay the premium to stay central": "Strong attachment to central living."
+      },
+      "scale": [
+        "Very unlikely - I will pay the premium to stay central",
+        "Unlikely",
+        "Undecided/Exploring options",
+        "Likely",
+        "Very likely - I am actively planning to move outward for better value"
+      ],
+      "semantic_profile": "economic_pressure",
+      "source": "adaptive",
+      "temperature": 1.0
+    },
+    "relocation_likelihood": {
+      "dimension_weights": {},
+      "dominant_factors": [
+        "location",
+        "income",
+        "social"
+      ],
+      "factor_weights": {
+        "behavioral": 0.04000000000000001,
+        "belief": 0.04000000000000001,
+        "income": 0.28,
+        "location": 0.28,
+        "memory": 0.04000000000000001,
+        "personality": 0.04000000000000001,
+        "social": 0.28
+      },
+      "name": "relocation_likelihood",
+      "narrative_guidance": {
+        "Likely": "Willing to explore suburban options.",
+        "Undecided/Exploring options": "Open to possibilities but not committed.",
+        "Unlikely": "Preference for central living but considering options.",
+        "Very likely - I am actively planning to move outward for better value": "Strong motivation to relocate for affordability.",
+        "Very unlikely - I will pay the premium to stay central": "Strong attachment to central living."
+      },
+      "scale": [
+        "Very unlikely - I will pay the premium to stay central",
+        "Unlikely",
+        "Undecided/Exploring options",
+        "Likely",
+        "Very likely - I am actively planning to move outward for better value"
+      ],
+      "semantic_profile": "economic_pressure",
+      "source": "adaptive",
+      "temperature": 1.0
+    },
+    "survey_model_1": {
+      "dimension_weights": {},
+      "dominant_factors": [
+        "income",
+        "social",
+        "behavioral",
+        "belief",
+        "personality",
+        "location",
+        "memory"
+      ],
+      "factor_weights": {
+        "behavioral": 0.14285714285714285,
+        "belief": 0.14285714285714285,
+        "income": 0.14285714285714285,
+        "location": 0.14285714285714285,
+        "memory": 0.14285714285714285,
+        "personality": 0.14285714285714285,
+        "social": 0.14285714285714285
+      },
+      "name": "survey_model_1",
+      "narrative_guidance": {
+        "Neutral": "Maintain a balanced view.",
+        "Satisfied": "Show contentment.",
+        "Unsatisfied": "Convey mild disappointment.",
+        "Very Satisfied": "Exude high levels of satisfaction.",
+        "Very Unsatisfied": "Express strong dissatisfaction."
+      },
+      "scale": [
+        "Very Unsatisfied",
+        "Unsatisfied",
+        "Neutral",
+        "Satisfied",
+        "Very Satisfied"
+      ],
+      "semantic_profile": "lifestyle_frequency",
+      "source": "adaptive",
+      "temperature": 1.0
+    }
+  },
+  "question_hash_map": {
+    "00fdf1b4a3a4715d7be73a5e": "exercise_intent",
+    "0b2dd5f2ff05493fb922e639": "food_habit_adjustment",
+    "0d7df452441e4f3e94314dca": "internet_service_usage",
+    "2625fd42fb5cca467d705b0b": "ai_integration_workflow",
+    "40a26cb8329e18462a460370": "relocation_intent_dubai",
+    "7ad62f6d75fcc58ebe3dc2d9": "delivery_usage_frequency",
+    "8f434346648f6b96df89dda9": "survey_model_1",
+    "982dd73dd49e0cd79b70f375": "commute_switch_public_transit",
+    "e93b8c14e7bc05b233c41ae0": "internet_service_satisfaction",
+    "f0003affc9b20cd3007ae5e7": "neighborhood_safety_perception"
+  },
+  "references": {
+    "ai_integration_in_design": {
+      "Completely opposed - I strictly rely on traditional drafting and human-driven processes": 0.15,
+      "Experimenting - I use them occasionally for initial brainstorming or mood boards": 0.3,
+      "Highly dependent - My entire pipeline from spatial layout to final render relies heavily on AI": 0.1,
+      "Integrated - They are a regular part of my concept generation and planning process": 0.2,
+      "Unlikely to adopt soon - I have tried them, but they lack the precision I need": 0.25
+    },
+    "ai_integration_workflow": {
+      "Completely opposed - I strictly rely on traditional drafting and human-driven processes": 0.15,
+      "Experimenting - I use them occasionally for initial brainstorming or mood boards": 0.3,
+      "Highly dependent - My entire pipeline from spatial layout to final render relies heavily on AI": 0.1,
+      "Integrated - They are a regular part of my concept generation and planning process": 0.2,
+      "Unlikely to adopt soon - I have tried them, but they lack the precision I need": 0.25
+    },
+    "commute_switch_public_transit": {
+      "Highly likely - I will completely switch to public transit, or I already use it": 0.15,
+      "Highly unlikely - I will just pay the toll and continue driving during peak hours": 0.25,
+      "Likely - I will start taking public transit a few days a week to save money": 0.25,
+      "Undecided/Exploring options - I need to calculate the costs and see how bad the traffic gets first": 0.15,
+      "Unlikely - I will keep driving but try to shift my work schedule to avoid the toll window": 0.2
+    },
+    "commute_switching_toll": {
+      "Highly likely - I will completely switch to public transit, or I already use it": 0.15,
+      "Highly unlikely - I will just pay the toll and continue driving during peak hours": 0.25,
+      "Likely - I will start taking public transit a few days a week to save money": 0.25,
+      "Undecided/Exploring options - I need to calculate the costs and see how bad the traffic gets first": 0.15,
+      "Unlikely - I will keep driving but try to shift my work schedule to avoid the toll window": 0.2
+    },
+    "delivery_usage_frequency": {
+      "Always": 0.15,
+      "Never": 0.1,
+      "Often": 0.25,
+      "Rarely": 0.2,
+      "Sometimes": 0.3
+    },
+    "exercise_intent": {
+      "Likely": 0.21052631578947367,
+      "Neutral": 0.21052631578947367,
+      "Unlikely": 0.2631578947368421,
+      "Very likely": 0.10526315789473684,
+      "Very unlikely": 0.21052631578947367
+    },
+    "food_habit_adjustment": {
+      "Exploring alternatives - I will start bulk-buying, hunting for weekly discounts, and switching to cheaper local grocery brands": 0.3,
+      "Extreme shift - I am completely overhauling my diet to bare essentials and relying on the absolute cheapest subsidized food options available": 0.1,
+      "Minor adjustments - I will maintain my grocery list but completely cut out dining out or delivery apps to balance the budget": 0.25,
+      "No change - I will absorb the extra cost; food quality/diet is a non-negotiable priority for me": 0.15,
+      "Significant shift - I will drastically reduce expensive items like meat/organic produce and shift to cheaper staple carbs like rice, lentils, and pasta": 0.2
+    },
+    "internet_service_satisfaction": {
+      "1 (Very dissatisfied)": 0.15,
+      "2 (Dissatisfied)": 0.25,
+      "3 (Neutral)": 0.2,
+      "4 (Satisfied)": 0.25,
+      "5 (Very satisfied)": 0.15
+    },
+    "internet_service_usage": {
+      "Always": 0.15,
+      "Never": 0.1,
+      "Often": 0.25,
+      "Rarely": 0.2,
+      "Sometimes": 0.3
+    },
+    "internet_usage_frequency": {
+      "Always": 0.15,
+      "Never": 0.1,
+      "Often": 0.25,
+      "Rarely": 0.2,
+      "Sometimes": 0.3
+    },
+    "neighborhood_safety_perception": {
+      "1 (Very unsafe)": 0.18,
+      "2": 0.22,
+      "3": 0.22,
+      "4": 0.22,
+      "5 (Very safe)": 0.16
+    },
+    "relocation_intent": {
+      "Likely": 0.25,
+      "Undecided/Exploring options": 0.15,
+      "Unlikely": 0.2,
+      "Very likely - I am actively planning to move outward for better value": 0.15,
+      "Very unlikely - I will pay the premium to stay central": 0.25
+    },
+    "relocation_intent_dubai": {
+      "Likely": 0.2,
+      "Undecided/Exploring options": 0.25,
+      "Unlikely": 0.2,
+      "Very likely - I am actively planning to move outward for better value": 0.1,
+      "Very unlikely - I will pay the premium to stay central": 0.25
+    },
+    "relocation_likelihood": {
+      "Likely": 0.25,
+      "Undecided/Exploring options": 0.15,
+      "Unlikely": 0.2,
+      "Very likely - I am actively planning to move outward for better value": 0.15,
+      "Very unlikely - I will pay the premium to stay central": 0.25
+    },
+    "survey_model_1": {
+      "Neutral": 0.3,
+      "Satisfied": 0.25,
+      "Unsatisfied": 0.2,
+      "Very Satisfied": 0.15,
+      "Very Unsatisfied": 0.1
+    }
+  }
+}

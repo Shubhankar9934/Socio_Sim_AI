@@ -6,6 +6,7 @@ import json
 import re
 from typing import Any, Dict, List, Optional
 
+from core.rng import make_rng_pack
 from config.settings import get_settings
 from llm.client import get_llm_client
 from llm.prompts import build_judge_prompt, JUDGE_SYSTEM
@@ -43,7 +44,12 @@ async def judge_response(
             }
     except (json.JSONDecodeError, ValueError):
         pass
-    return {"realism": 3, "persona_consistency": 3, "cultural_plausibility": 3}
+    return {
+        "realism": 3,
+        "persona_consistency": 3,
+        "cultural_plausibility": 3,
+        "fallback_used": 1,
+    }
 
 
 async def judge_responses_batch(
@@ -56,13 +62,13 @@ async def judge_responses_batch(
     Judge a batch (personas[i], questions[i], responses[i]).
     If sample_size set, only judge a random sample to save cost.
     """
-    import random
     n = len(personas)
     if n != len(questions) or n != len(responses):
         return {"error": "Length mismatch", "scores": []}
     indices = list(range(n))
     if sample_size and n > sample_size:
-        indices = random.sample(indices, sample_size)
+        pack = make_rng_pack(f"judge_batch:{n}:{sample_size}")
+        indices = pack.py_rng.sample(indices, sample_size)
     scores = []
     for i in indices:
         s = await judge_response(personas[i], questions[i], responses[i])

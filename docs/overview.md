@@ -2,6 +2,8 @@
 
 ## What This Project Does
 
+For **motivation, scope, limits, and roadmap-style potential**, read [Vision and goals](vision-and-goals.md).
+
 JADU is a research-grade **synthetic society simulation platform** that models how large populations form opinions, react to information, and generate emergent social phenomena. You generate a synthetic population (e.g. Dubai demographics), run surveys or multi-day simulations with media and social influence, and get segmented analytics and evaluation reports (realism, drift, consistency, distribution fit, optional LLM-as-judge). The system answers “what would this population say?” under different scenarios and can be calibrated to match real survey distributions.
 
 ## How the Pieces Connect

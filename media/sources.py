@@ -14,6 +14,7 @@ from typing import Dict, List, Optional
 import numpy as np
 
 from agents.belief_network import BELIEF_DIMENSIONS, _N_BELIEFS
+from core.rng import ensure_np_rng
 
 
 @dataclass
@@ -101,7 +102,7 @@ def assign_media_diet(
     Agents are more likely to subscribe to sources whose editorial bias
     vector aligns with their own beliefs, but with stochastic variation.
     """
-    gen = rng or np.random.default_rng()
+    gen = ensure_np_rng(rng, key="media_assign_diet")
     pool = sources or DEFAULT_SOURCES
 
     scores = np.array([_cosine_sim(belief_vector, s.bias_vector) for s in pool])

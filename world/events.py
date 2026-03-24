@@ -12,9 +12,12 @@ Supported event types:
 """
 
 from dataclasses import dataclass, field
+import logging
 from typing import Any, Dict, List, Optional
 
 from world.districts import DEFAULT_DISTRICT_PROPERTIES, DistrictProperties
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -85,17 +88,56 @@ def _apply_price_change(
 ) -> None:
     multipliers = gp.setdefault("price_multipliers", {})
     explicit_impacts = event.payload.get("dimension_impacts", {})
+    applied_values: List[float] = []
+
+    def _to_float(value: Any) -> Optional[float]:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    service_name = (
+        event.payload.get("service")
+        or event.payload.get("target")
+        or event.payload.get("target_service")
+    )
+    service_multiplier = (
+        event.payload.get("multiplier")
+        if "multiplier" in event.payload
+        else event.payload.get("value")
+    )
+    if service_name is not None and service_multiplier is not None:
+        parsed = _to_float(service_multiplier)
+        if parsed is not None:
+            multipliers[str(service_name)] = parsed
+            applied_values.append(parsed)
+
     for key, value in event.payload.items():
-        if key in ("dimension_impacts", "belief_impacts"):
+        if key in {
+            "dimension_impacts",
+            "belief_impacts",
+            "service",
+            "target",
+            "target_service",
+            "multiplier",
+            "value",
+        }:
             continue
-        multipliers[key] = float(value)
+        parsed = _to_float(value)
+        if parsed is None:
+            logger.warning(
+                "Skipping non-numeric price_change payload field '%s'=%r",
+                key,
+                value,
+            )
+            continue
+        multipliers[key] = parsed
+        applied_values.append(parsed)
+
     # Auto-generate: price increases raise price_sensitivity
     impacts = dict(explicit_impacts)
-    if not impacts:
-        avg_mult = sum(
-            float(v) for k, v in event.payload.items()
-            if k not in ("dimension_impacts", "belief_impacts")
-        ) / max(1, len(multipliers))
+    if not impacts and applied_values:
+        avg_mult = sum(applied_values) / len(applied_values)
         if avg_mult > 1.0:
             impacts = {"price_sensitivity": 0.03}
         elif avg_mult < 1.0:

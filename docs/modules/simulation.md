@@ -72,6 +72,23 @@ Simulation kernel, survey orchestration, archetypes, cascade detection, and even
 | `on_progress(callback)` | Register async callback after each round. |
 | `get_progress()` | Current session progress snapshot. |
 
+### Coordinator integration
+
+[`SurveyEngine`](../../simulation/survey_engine.py) constructs a [`SimulationCoordinator`](../../simulation/coordinator.py) by default. After each round it calls `enforce_distribution_health` on responses; after all rounds it may call `compute_population_health` for aggregate checks. This surfaces entropy / collapse / correlation issues without replacing per-agent decision logic.
+
+---
+
+## coordinator.py
+
+**Purpose**: **Population-level enforcement** between survey rounds — distribution health (entropy, dominant share, optional JS vs reference), and hooks into [`evaluation/invariants.check_population_invariants`](../../evaluation/invariants.py).
+
+### Classes
+
+| Class | Description |
+|-------|-------------|
+| `PopulationHealth` | `entropy_status`, `collapse_status`, `correlation_status`, `invariant_violations`. |
+| `SimulationCoordinator` | `enforce_distribution_health`, `compute_population_health`, round history. |
+
 ---
 
 ## archetypes.py

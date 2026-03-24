@@ -16,7 +16,7 @@ Population realism, behavioral drift, cross-question consistency, distribution v
 
 | Function | Description | How |
 |----------|-------------|-----|
-| `run_evaluation(personas, survey_responses, response_histories, realism_threshold, drift_threshold, run_judge, judge_sample, run_similarity, similarity_threshold, reference_distribution)` | Build full report. | (1) compute_realism_report(personas); (2) append survey_responses to response_histories per agent, then drift_report(personas, response_histories); (3) build response_sets per question_id from histories, consistency_score_from_responses if ≥2 questions; (4) validate_survey_distribution(survey_responses, reference); (5) compute_narrative_similarity on narrative answers if run_similarity; (6) if run_judge, judge_responses_batch on sample; (7) build dashboard from metrics; (8) quantitative_metrics pass/fail vs QUALITY_TARGETS; (9) summary (realism_passed, drift_count, distribution_passed, all_targets_passed). Returns report dict. |
+| `run_evaluation(..., reference_distribution, question_model_key)` | Build full report. | Same pipeline as before; distribution step uses explicit `reference_distribution` or resolves reference via `question_model_key` when set. Sets `consistency_valid` from cross-question data availability. Returns report dict. |
 | `export_evaluation_report(report, output_path, system_info)` | Write JSON file. | Builds export with timestamp, system_info, quantitative_metrics, dashboard, distribution_validation, narrative_similarity (no flagged_pairs), population_realism, summary; json.dump to output_path. Returns absolute path. |
 
 ---
@@ -104,6 +104,33 @@ Population realism, behavioral drift, cross-question consistency, distribution v
 |----------|-------------|-----|
 | `judge_response(persona, question, response, model)` | Single response scores. | persona.to_compressed_summary(); build_judge_prompt(summary, question, response); chat with JUDGE_SYSTEM and user prompt; parse JSON from response (regex \{...\}); return realism, persona_consistency, cultural_plausibility (1–5); default 3 on parse failure. |
 | `judge_responses_batch(personas, questions, responses, sample_size)` | Batch with optional sampling. | If sample_size set, random.sample indices; for each (persona, question, response) call judge_response; aggregate average realism, persona_consistency, cultural_plausibility. Returns scores list, average dict, n_judged. |
+
+---
+
+## invariants.py
+
+**Purpose**: **Formal invariants** after each agent response and **population-level** checks for survey rounds.
+
+### Agent-level
+
+| Function | Role |
+|----------|------|
+| `run_agent_invariants` | Entry from [`AgentCognitiveEngine.think`](../../agents/cognitive.py) — consistency vs structured memory, distribution sums, etc. |
+| `invariant_consistency` | No large jumps vs prior answer for same semantic key. |
+
+### Population-level
+
+| Function | Role |
+|----------|------|
+| `check_population_invariants` | Aggregate checks used by [`SimulationCoordinator`](../../simulation/coordinator.py). |
+
+**Tests:** [`tests/test_system_invariants.py`](../../tests/test_system_invariants.py).
+
+---
+
+## runtime_metrics.py
+
+**Purpose**: **Live session metrics** — `MetricsCollector` ingests per-response trace dicts (`record_response`, `finalize_round`) and exposes `SessionMetrics` (diversity entropy, duplicate rate, invariant violation counts, intent distribution, mean confidence, word-count stats). Complements post-hoc `run_evaluation` for long multi-round runs.
 
 ---
 

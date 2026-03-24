@@ -35,11 +35,14 @@ from api.schemas import (
 )
 from api.state import agents_store, response_histories, survey_results, survey_sessions
 from simulation.orchestrator import run_survey
+from agents.intent_router import strip_survey_options_if_qualitative
+from agents.perception import perceive, perceive_with_llm, detect_question_model
+from config.option_space import canonicalize_options, validate_option_compatibility_hybrid
 
 router = APIRouter(prefix="/survey", tags=["survey"])
 
 
-@router.post("", response_model=SurveyResult)
+@router.post("", response_model=SurveyResult, response_model_exclude_none=True)
 async def run_survey_endpoint(body: SurveyRequest) -> SurveyResult:
     """Run a survey question across the population."""
     if not agents_store:
@@ -47,10 +50,36 @@ async def run_survey_endpoint(body: SurveyRequest) -> SurveyResult:
     question = body.question
     question_id = body.question_id or str(uuid.uuid4())
     use_archetypes = body.use_archetypes
+    routed_options = strip_survey_options_if_qualitative(question, body.options)
+    canonical_options = routed_options
+    if routed_options:
+        p = await perceive_with_llm(
+            question, options=routed_options, question_id=question_id,
+        )
+        qm = detect_question_model(p)
+        canonical_options = canonicalize_options(qm.name, routed_options)
+        compatible, normalized, warnings = await validate_option_compatibility_hybrid(
+            qm.name,
+            routed_options,
+            qm.scale,
+        )
+        if not compatible:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "incompatible_option_space",
+                    "question_model_key": qm.name,
+                    "expected_scale": qm.scale,
+                    "provided_options_normalized": normalized,
+                    "warnings": warnings,
+                },
+            )
+        canonical_options = normalized
 
     client = get_llm_client()
     client.reset_survey_stats()
 
+    api_survey_run_id = str(uuid.uuid4())
     # think_fn=None triggers the orchestrator's default_think which
     # reuses persistent AgentState (structured memory, latent state),
     # injects social neighbor means, and applies narrative style profiles.
@@ -58,17 +87,29 @@ async def run_survey_endpoint(body: SurveyRequest) -> SurveyResult:
         agents_store,
         question=question,
         question_id=question_id,
-        options=body.options,
+        options=canonical_options,
         think_fn=None,
         use_archetypes=use_archetypes,
         current_events=body.current_events,
+        diagnostics_enabled=body.diagnostics,
+        survey_run_id=api_survey_run_id,
     )
     items = [
         SurveyResponseItem(
             agent_id=r.get("agent_id", ""),
             answer=r.get("answer", r.get("error", "")),
+            interaction_mode=r.get("interaction_mode"),
+            turn_understanding=r.get("turn_understanding"),
             sampled_option=r.get("sampled_option"),
+            sampled_option_canonical=r.get("sampled_option_canonical"),
             distribution=r.get("distribution"),
+            question_model_key=r.get("question_model_key"),
+            option_space_key=r.get("option_space_key"),
+            decision_trace=r.get("decision_trace"),
+            narrative_alignment_status=r.get("narrative_alignment_status"),
+            run_metadata=r.get("run_metadata"),
+            response_diagnostics=r.get("response_diagnostics"),
+            fallback_flags=r.get("fallback_flags"),
             demographics=AgentDemographics(**r["demographics"]) if r.get("demographics") else None,
             lifestyle=AgentLifestyle(**r["lifestyle"]) if r.get("lifestyle") else None,
             error=r.get("error"),
@@ -93,6 +134,8 @@ async def run_survey_endpoint(body: SurveyRequest) -> SurveyResult:
                 "survey_id": survey_id,
                 "answer": r.get("answer", ""),
                 "sampled_option": r.get("sampled_option", ""),
+                "sampled_option_canonical": r.get("sampled_option_canonical", r.get("sampled_option", "")),
+                "question_model_key": r.get("question_model_key", ""),
             })
 
     n_calls = client.session_call_count
@@ -115,7 +158,7 @@ async def run_survey_endpoint(body: SurveyRequest) -> SurveyResult:
     )
 
 
-@router.get("/{survey_id}/results", response_model=SurveyResult)
+@router.get("/{survey_id}/results", response_model=SurveyResult, response_model_exclude_none=True)
 def get_survey_results(survey_id: str) -> SurveyResult:
     """Get stored survey results by id."""
     if survey_id not in survey_results:
@@ -138,8 +181,18 @@ def _responses_to_items(responses: List[Dict[str, Any]]) -> List[SurveyResponseI
         SurveyResponseItem(
             agent_id=r.get("agent_id", ""),
             answer=r.get("answer", r.get("error", "")),
+            interaction_mode=r.get("interaction_mode"),
+            turn_understanding=r.get("turn_understanding"),
             sampled_option=r.get("sampled_option"),
+            sampled_option_canonical=r.get("sampled_option_canonical"),
             distribution=r.get("distribution"),
+            question_model_key=r.get("question_model_key"),
+            option_space_key=r.get("option_space_key"),
+            decision_trace=r.get("decision_trace"),
+            narrative_alignment_status=r.get("narrative_alignment_status"),
+            run_metadata=r.get("run_metadata"),
+            response_diagnostics=r.get("response_diagnostics"),
+            fallback_flags=r.get("fallback_flags"),
             demographics=(
                 AgentDemographics(**r["demographics"]) if r.get("demographics") else None
             ),
@@ -161,6 +214,7 @@ async def _run_multi_survey_task(session_id: str, body: MultiSurveyRequest) -> N
 
     config = SurveyEngineConfig(
         use_archetypes=body.use_archetypes,
+        diagnostics_enabled=body.diagnostics,
         social_influence_between_rounds=body.social_influence_between_rounds,
         summarize_every=body.summarize_every,
     )
@@ -192,14 +246,39 @@ async def _run_multi_survey_task(session_id: str, body: MultiSurveyRequest) -> N
 
     engine.on_progress(_on_progress)
 
-    questions = [
-        {
+    questions = []
+    for q in body.questions:
+        qid = q.question_id or str(uuid.uuid4())
+        options = None
+        routed = strip_survey_options_if_qualitative(q.question, q.options)
+        if routed:
+            p = await perceive_with_llm(
+                q.question, options=routed, question_id=qid,
+            )
+            qm = detect_question_model(p)
+            compatible, normalized, warnings = await validate_option_compatibility_hybrid(
+                qm.name,
+                routed,
+                qm.scale,
+            )
+            if not compatible:
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "error": "incompatible_option_space",
+                        "question": q.question,
+                        "question_model_key": qm.name,
+                        "expected_scale": qm.scale,
+                        "provided_options_normalized": normalized,
+                        "warnings": warnings,
+                    },
+                )
+            options = normalized
+        questions.append({
             "question": q.question,
-            "question_id": q.question_id or str(uuid.uuid4()),
-            "options": q.options,
-        }
-        for q in body.questions
-    ]
+            "question_id": qid,
+            "options": options,
+        })
 
     session = survey_sessions[session_id]
     try:
@@ -226,6 +305,8 @@ async def _run_multi_survey_task(session_id: str, body: MultiSurveyRequest) -> N
                         "survey_id": round_survey_id,
                         "answer": r.get("answer", ""),
                         "sampled_option": r.get("sampled_option", ""),
+                        "sampled_option_canonical": r.get("sampled_option_canonical", r.get("sampled_option", "")),
+                        "question_model_key": r.get("question_model_key", ""),
                     })
 
         await ws_manager.broadcast(ws_channel, {
@@ -301,7 +382,7 @@ def get_multi_survey_progress(session_id: str) -> MultiSurveyProgress:
     )
 
 
-@router.get("/session/{session_id}/results", response_model=SurveySessionResult)
+@router.get("/session/{session_id}/results", response_model=SurveySessionResult, response_model_exclude_none=True)
 def get_multi_survey_results(session_id: str) -> SurveySessionResult:
     """Retrieve full results for a completed multi-question survey session."""
     session = survey_sessions.get(session_id)
@@ -334,7 +415,7 @@ def get_multi_survey_results(session_id: str) -> SurveySessionResult:
     )
 
 
-@router.get("/session/{session_id}/round/{round_idx}", response_model=SurveyResult)
+@router.get("/session/{session_id}/round/{round_idx}", response_model=SurveyResult, response_model_exclude_none=True)
 def get_multi_survey_round(session_id: str, round_idx: int) -> SurveyResult:
     """Retrieve results for a specific round of a multi-question survey session."""
     round_survey_id = f"{session_id}_r{round_idx}"

@@ -10,13 +10,32 @@ the social_factor to consume during decision-making.
 
 import asyncio
 import re
+import uuid
 from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 
+from agents.intent_router import strip_survey_options_if_qualitative
+from agents.response_contract import build_response_contract
+from config.option_space import canonicalize_option, get_option_space_key
 from config.settings import get_settings
 from population.personas import Persona
 from simulation.archetypes import build_archetype_map
+from world.districts import resolve_location_quality
+
+
+def _derive_fallback_flags(decision_trace: Optional[Dict[str, Any]]) -> List[str]:
+    trace = decision_trace or {}
+    flags: List[str] = []
+    if trace.get("fallback_used"):
+        flags.append(f"decision:{trace.get('fallback_used')}")
+    if trace.get("invariant_failure"):
+        flags.append("decision:invariant_failure")
+    if trace.get("post_sampling_guard", {}).get("hard_constraint_violation_avoided"):
+        flags.append("sampling:hard_constraint_guard")
+    if trace.get("demographic_plausibility_resample"):
+        flags.append("sampling:plausibility_resample")
+    return flags
 
 
 def _fuzzy_replace(text: str, src_val: str, tgt_val: str) -> str:
@@ -156,15 +175,16 @@ async def run_agent_async(
     question_id: str,
     think_fn: Callable[..., Any],
     friends_using: float = 0.0,
-    location_quality: float = 0.5,
+    location_quality: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Run one agent's think pipeline (async)."""
+    lq = resolve_location_quality(persona.location, location_quality)
     result = await think_fn(
         persona=persona,
         question=question,
         question_id=question_id,
         friends_using=friends_using,
-        location_quality=location_quality,
+        location_quality=lq,
     )
     result["agent_id"] = agent_id
     return result
@@ -179,15 +199,24 @@ async def run_survey(
     use_archetypes: bool = False,
     max_concurrent: Optional[int] = None,
     current_events: Optional[List[Dict[str, Any]]] = None,
+    diagnostics_enabled: bool = False,
+    survey_run_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Run survey: each agent answers the question via think_fn.
     If use_archetypes=True, only archetype representatives call LLM;
     others get an adapted narrative via token substitution (~90% cost reduction).
     """
+    options = strip_survey_options_if_qualitative(question, options)
     settings = get_settings()
+    run_seed = getattr(settings, "master_seed", 42)
     max_concurrent = max_concurrent or settings.max_concurrent_llm_calls
     semaphore = asyncio.Semaphore(max_concurrent)
+    batch_survey_run_id = (survey_run_id or "").strip() or str(uuid.uuid4())
+    if getattr(settings, "clear_turn_understanding_cache_on_survey_start", False):
+        from agents.intent_router import clear_turn_understanding_cache
+
+        clear_turn_understanding_cache()
 
     # Shared set for batch-level opening deduplication across all agents
     used_openings: set = set()
@@ -284,13 +313,22 @@ async def run_survey(
         pass
 
     if think_fn is None:
-        async def default_think(persona, question, question_id, friends_using, location_quality):
+        async def default_think(
+            persona,
+            question,
+            question_id,
+            friends_using,
+            location_quality,
+            tone_override=None,
+            diagnostics_enabled: bool = False,
+        ):
             from agents.cognitive import AgentCognitiveEngine
             from agents.state import AgentState
             from llm.prompts import reasoner_via_llm
             from memory.store import get_memory_store
 
             state = _state_cache.get(persona.agent_id) or AgentState.from_persona(persona)
+            state.survey_run_id = batch_survey_run_id
             _state_cache[persona.agent_id] = state
             store = get_memory_store()
 
@@ -328,12 +366,18 @@ async def run_survey(
 
             _local_sim_ctx = sim_ctx
 
-            async def _reasoner_with_dedup(p, q, sa, dist, mems):
+            async def _reasoner_with_dedup(
+                p, q, sa, dist, mems, response_contract=None, turn_understanding=None, diagnostics_enabled: bool = False
+            ):
                 return await reasoner_via_llm(
                     p, q, sa, dist, mems,
                     used_openings=used_openings,
+                    tone_override=tone_override,
                     simulation_context=_local_sim_ctx,
                     option_labels=options,
+                    response_contract=response_contract,
+                    turn_understanding=turn_understanding,
+                    diagnostics_enabled=diagnostics_enabled,
                 )
 
             engine = AgentCognitiveEngine(
@@ -351,7 +395,14 @@ async def run_survey(
                 engine._world_environment["research_context"] = _research_ctx.to_prompt_text()
             engine._world_environment["simulation_context"] = sim_ctx
 
-            result = await engine.think(question, question_id, friends_using, location_quality)
+            result = await engine.think(
+                question,
+                question_id,
+                friends_using,
+                location_quality,
+                diagnostics_enabled=diagnostics_enabled,
+                option_labels=options,
+            )
             store.add_memory(
                 persona.agent_id,
                 f"Q: {question} | A: {result.get('sampled_option', '')}",
@@ -365,15 +416,34 @@ async def run_survey(
             return result
         think_fn = default_think
 
-    async def bounded_think(persona, question, question_id, friends_using, location_quality):
+    async def bounded_think(
+        persona,
+        question,
+        question_id,
+        friends_using,
+        location_quality,
+        tone_override=None,
+        diagnostics_enabled: bool = False,
+    ):
         async with semaphore:
-            return await think_fn(
-                persona=persona,
-                question=question,
-                question_id=question_id,
-                friends_using=friends_using,
-                location_quality=location_quality,
-            )
+            try:
+                return await think_fn(
+                    persona=persona,
+                    question=question,
+                    question_id=question_id,
+                    friends_using=friends_using,
+                    location_quality=location_quality,
+                    tone_override=tone_override,
+                    diagnostics_enabled=diagnostics_enabled,
+                )
+            except TypeError:
+                return await think_fn(
+                    persona=persona,
+                    question=question,
+                    question_id=question_id,
+                    friends_using=friends_using,
+                    location_quality=location_quality,
+                )
 
     personas = [a["persona"] for a in agents]
     archetype_rep: Optional[Dict[int, int]] = None
@@ -400,7 +470,10 @@ async def run_survey(
                 question=question,
                 question_id=question_id,
                 friends_using=a.get("social_trait_fraction", 0.0),
-                location_quality=a.get("location_quality", 0.5),
+                location_quality=resolve_location_quality(
+                    persona.location, a.get("location_quality"),
+                ),
+                diagnostics_enabled=diagnostics_enabled,
             )
         gathered = await asyncio.gather(*rep_tasks.values(), return_exceptions=True)
         for idx, result in zip(rep_tasks.keys(), gathered):
@@ -419,17 +492,22 @@ async def run_survey(
         persona = a["persona"]
         agent_id = persona.agent_id
         friends_using = a.get("social_trait_fraction", 0.0)
-        location_quality = a.get("location_quality", 0.5)
+        location_quality = resolve_location_quality(
+            persona.location, a.get("location_quality"),
+        )
 
         if archetype_rep is not None and labels is not None:
             c = labels[i]
             rep_idx = archetype_rep.get(c, 0)
             if rep_idx != i:
                 from agents.cognitive import AgentCognitiveEngine
+                from agents.perception import perceive_with_llm
                 from agents.state import AgentState
                 from memory.store import get_memory_store
 
-                state = AgentState.from_persona(persona)
+                state = a.get("state") or AgentState.from_persona(persona)
+                state.survey_run_id = batch_survey_run_id
+                state.nlu_question_id = (question_id or "").strip()
                 store = get_memory_store()
 
                 def _recall(agent_id, perception, _s=store):
@@ -438,13 +516,19 @@ async def run_survey(
                 engine = AgentCognitiveEngine(
                     persona=persona, state=state, memory_recall=_recall,
                 )
-                perception = engine.perceive(question)
+                rep_data = rep_results.get(rep_idx, {})
+                rep_qmk = str(rep_data.get("question_model_key", "") or "")
+                perception = await perceive_with_llm(
+                    question, state=state, options=options, question_id=question_id or "",
+                )
+                if rep_qmk:
+                    # Keep archetype member model resolution aligned with representative.
+                    perception.question_model_key = rep_qmk
                 memories = await engine.recall(perception)
                 dist, sampled = engine.decide(
                     perception, memories, friends_using=friends_using,
                     location_quality=location_quality,
                 )
-                rep_data = rep_results.get(rep_idx, {})
                 rep_narrative = rep_data.get("answer", "")
                 rep_sampled = rep_data.get("sampled_option", "")
 
@@ -456,6 +540,7 @@ async def run_survey(
                         question_id=question_id,
                         friends_using=friends_using,
                         location_quality=location_quality,
+                        diagnostics_enabled=diagnostics_enabled,
                     )
                     result["agent_id"] = agent_id
                     return result
@@ -469,6 +554,7 @@ async def run_survey(
                         question_id=question_id,
                         friends_using=friends_using,
                         location_quality=location_quality,
+                        diagnostics_enabled=diagnostics_enabled,
                     )
                     result["agent_id"] = agent_id
                     return result
@@ -480,11 +566,17 @@ async def run_survey(
                     adapted = sampled
                 pa = persona.personal_anchors
                 pmeta = persona.meta
-                return {
+                result_payload = {
                     "agent_id": agent_id,
                     "answer": adapted,
+                    "interaction_mode": getattr(perception, "interaction_mode", "survey"),
                     "sampled_option": sampled,
+                    "sampled_option_canonical": sampled,
                     "distribution": dist,
+                    "question_model_key": rep_qmk or getattr(perception, "question_model_key", ""),
+                    "option_space_key": get_option_space_key(rep_qmk or getattr(perception, "question_model_key", "")),
+                    "decision_trace": {"source": "archetype_non_representative"},
+                    "narrative_alignment_status": "template_adapted",
                     "demographics": {
                         "age_group": persona.age,
                         "nationality": persona.nationality,
@@ -511,6 +603,21 @@ async def run_survey(
                         "persona_cluster": pmeta.persona_cluster,
                     },
                 }
+                if diagnostics_enabled:
+                    contract = build_response_contract(
+                        interaction_mode=getattr(perception, "interaction_mode", "survey"),
+                        scale_type=getattr(perception, "scale_type", ""),
+                        sampled_option=sampled,
+                        distribution=dist,
+                        ordered_options=list(dist.keys()),
+                        latent_state=getattr(state, "latent_state", None),
+                    )
+                    _response = {
+                        "source": "archetype_non_representative",
+                        **contract.to_dict(),
+                    }
+                    result_payload["response_diagnostics"] = _response
+                return result_payload
             else:
                 return rep_results.get(i, await bounded_think(
                     persona=persona,
@@ -518,6 +625,7 @@ async def run_survey(
                     question_id=question_id,
                     friends_using=friends_using,
                     location_quality=location_quality,
+                    diagnostics_enabled=diagnostics_enabled,
                 ))
 
         return await bounded_think(
@@ -526,6 +634,7 @@ async def run_survey(
             question_id=question_id,
             friends_using=friends_using,
             location_quality=location_quality,
+            diagnostics_enabled=diagnostics_enabled,
         )
 
     tasks = [run_one(i) for i in range(len(agents))]
@@ -536,5 +645,29 @@ async def run_survey(
             out.append({"agent_id": agents[i]["persona"].agent_id, "error": str(r), "answer": ""})
         else:
             r["agent_id"] = r.get("agent_id") or agents[i]["persona"].agent_id
+            qmk = r.get("question_model_key", "")
+            sampled = r.get("sampled_option")
+            if sampled and not r.get("sampled_option_canonical"):
+                r["sampled_option_canonical"] = canonicalize_option(qmk, sampled)
+            if qmk and not r.get("option_space_key"):
+                r["option_space_key"] = get_option_space_key(qmk)
+            existing_flags = list(r.get("fallback_flags") or [])
+            trace_flags = _derive_fallback_flags(r.get("decision_trace"))
+            dedup = []
+            seen = set()
+            for flag in existing_flags + trace_flags:
+                if flag in seen:
+                    continue
+                seen.add(flag)
+                dedup.append(flag)
+            r["fallback_flags"] = dedup
+            r["run_metadata"] = {
+                "run_seed": run_seed,
+                "rng_policy_version": "v1_seeded",
+                "question_id": question_id,
+                "question_model_key": qmk,
+                "option_space_key": r.get("option_space_key", ""),
+                "diagnostics_enabled": diagnostics_enabled,
+            }
             out.append(r)
     return out

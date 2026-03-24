@@ -73,3 +73,35 @@ Synthetic population synthesis, personas, segments, and validation.
 | `validate_population(personas, realism_threshold)` | Returns (passed, score, per_attribute). Compares marginals to target via JS divergence. |
 | `population_realism_score(personas)` | Aggregate score. |
 | `get_all_marginals(personas)` | Per-attribute distributions. |
+
+---
+
+## constraints.py
+
+**Purpose**: **Declarative plausibility rules** for synthesized personas (`Constraint` with `check` / `repair`). Catches impossible combinations (age vs occupation vs family structure) and repairs by nudging fields; uses per-agent RNG ([`core/rng.py`](core.md)) for stochastic repairs.
+
+### Functions
+
+| Function | Description |
+|----------|-------------|
+| `validate(persona)` | Return list of constraint names that fail. |
+| `repair(persona)` | Apply repairs for failing constraints. |
+| `validate_and_repair_all(persona, ...)` | Loop validate/repair until stable or iteration cap. |
+
+---
+
+## lazy_store.py
+
+**Purpose**: **LazyPopulationStore** — materialize agents on first access with deterministic seeds and LRU caching for very large logical `N` without holding all personas in RAM.
+
+| Method | Description |
+|--------|-------------|
+| `__getitem__(index or agent_id)` | Generate or fetch cached persona. |
+
+---
+
+## life_path.py
+
+**Purpose**: **Retroactive biography** — deterministic milestone sequences (education, career, relationships, moves) from age 18 to current age for richer LLM grounding. Uses `agent_seed_from_id` for reproducibility.
+
+**Types:** `LifePath`, `LifePathEntry` on [`Persona`](../../population/personas.py) when populated.

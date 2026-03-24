@@ -8,7 +8,8 @@
     "food_delivery": ["food delivery", "order food", "delivery", "talabat", "deliveroo", "zomato", "restaurant delivery", "order online", "takeaway"],
     "parking": ["parking", "park", "car park", "parking availability", "finding parking"],
     "transport": ["transport", "metro", "bus", "taxi", "commute", "mobility", "public transport", "sheikh zayed", "traffic", "driving"],
-    "housing": ["housing", "rent", "apartment", "accommodation", "living"],
+    "housing": ["housing", "rent", "apartment", "accommodation", "landlord"],
+    "cost_of_living": ["cost of living", "living expenses", "affordability", "price of living", "expenses", "grocery", "groceries", "grocery prices", "supermarket", "inflation", "food prices", "household budget", "utility bills", "utilities", "monthly bills"],
     "shopping": ["shopping", "mall", "retail", "buy", "purchase"],
     "tech": ["app", "fintech", "technology", "digital", "online service", "payfast", "pay fast", "bank", "payment", "wallet", "recommend"],
     "finance": ["network international", "payfast", "pay fast", "payment", "payment provider", "transaction", "bank", "fintech", "wallet", "recommend", "nps"],
@@ -17,6 +18,7 @@
     "general": []
   },
   "domain_keywords": {
+    "economics": ["inflation", "grocery", "groceries", "grocery prices", "supermarket", "household budget", "cost of living", "living expenses", "food prices", "utility bills", "utilities", "monthly bills", "affordability"],
     "transport": ["metro", "bus", "taxi", "car", "parking", "traffic", "commute"],
     "food": ["food", "delivery", "restaurant", "dining", "order", "cook"],
     "lifestyle": ["shopping", "entertainment", "leisure", "sport"],
@@ -27,8 +29,9 @@
   "topic_to_model_key": {
     "food_delivery": {"frequency": "food_delivery_frequency", "likert": "food_delivery_frequency", "categorical": "food_delivery_frequency"},
     "parking": {"frequency": "parking_satisfaction", "likert": "parking_satisfaction", "categorical": "parking_satisfaction"},
-    "transport": {"frequency": "transport_satisfaction", "likert": "transport_satisfaction", "categorical": "transport_satisfaction"},
+    "transport": {"frequency": "transport_usage_frequency", "likert": "transport_satisfaction", "categorical": "transport_satisfaction"},
     "housing": {"frequency": "housing_satisfaction", "likert": "housing_satisfaction", "categorical": "housing_satisfaction"},
+    "cost_of_living": {"frequency": "cost_of_living_satisfaction", "likert": "cost_of_living_satisfaction", "categorical": "cost_of_living_satisfaction"},
     "shopping": {"frequency": "shopping_frequency", "likert": "shopping_frequency", "categorical": "shopping_frequency"},
     "tech": {"frequency": "tech_adoption_likelihood", "likert": "nps_recommendation", "categorical": "tech_adoption_likelihood"},
     "finance": {"duration": "generic_duration", "frequency": "tech_adoption_likelihood", "likert": "nps_recommendation", "categorical": "nps_recommendation"},
@@ -59,6 +62,11 @@
     "50k+": {"rarely": -0.10, "1-2 per week": -0.03, "3-4 per week": 0.03, "daily": 0.05, "multiple per day": 0.05}
   },
   "implausible_combos": [
+    {"question_model_key": "cost_of_living_satisfaction", "filters": {"income": "<10k", "household_size": "5+"}, "option": "4", "severity": "hard", "warning": "Low income large household should not report high cost-of-living satisfaction"},
+    {"question_model_key": "cost_of_living_satisfaction", "filters": {"income": "<10k", "household_size": "5+"}, "option": "5", "severity": "hard", "warning": "Low income large household should not report very high cost-of-living satisfaction"},
+    {"question_model_key": "cost_of_living_satisfaction", "filters": {"income": "<10k", "household_size": "3-4"}, "option": "5", "severity": "hard", "warning": "Low income families are unlikely to be fully satisfied with cost of living"},
+    {"question_model_key": "cost_of_living_satisfaction", "filters": {"income": "50k+", "household_size": "1"}, "option": "1", "severity": "hard", "warning": "High income single respondents rarely report extreme dissatisfaction"},
+    {"question_model_key": "cost_of_living_satisfaction", "filters": {"income": "50k+", "household_size": "2"}, "option": "1", "severity": "hard", "warning": "High income small households rarely report extreme dissatisfaction"},
     {"filters": {"income": "<10k", "household_size": "5+"}, "option": "multiple per day", "warning": "Very low income large family ordering multiple times daily is implausible"},
     {"filters": {"income": "<10k", "household_size": "3-4"}, "option": "multiple per day", "warning": "Low income family ordering multiple deliveries daily is unusual"},
     {"filters": {"household_size": "1", "income": "<10k"}, "option": "multiple per day", "warning": "Low-income single person ordering multiple deliveries daily is rare"},
@@ -83,16 +91,18 @@
     "multiple per day": ["Multiple times a day.", "A lot.", "Few times daily.", "Like 2-3 times a day.", "Too much honestly.", "Breakfast and dinner at least.", "Yeah multiple times.", "Way too much.", "A lot lol.", "Constantly.", "2-3 times a day.", "Several times.", "All the time.", "More than I want to admit."]
   },
   "system_prompts": [
-    "You are a {city_name} resident answering a consumer survey. Be authentic and specific to your persona.",
-    "Answer as a real {city_name} resident would — personal, specific, grounded in daily experience.",
-    "You're filling out a survey about life in {city_name}. Answer naturally, as yourself.",
-    "Respond as a genuine {city_name} resident sharing honest opinions about daily life.",
-    "You're a {city_name} local taking a quick survey. Be real, be specific, be you.",
-    "Answer this survey question as a {city_name} resident. Draw from your daily routine and habits.",
-    "You live in {city_name}. Answer this survey honestly, based on your actual lifestyle.",
-    "As a {city_name} resident, share your genuine perspective on this question.",
-    "You're participating in a consumer survey about {city_name} life. Be authentic.",
-    "Respond naturally as a {city_name} resident — your real habits, real opinions."
+    "You're a person in {city_name} filling this survey on your phone. Talk the way you actually talk -- broken sentences, trailing thoughts, half-finished ideas are fine. Don't try to sound smart or organized.",
+    "You live in {city_name}. Someone asked you this question in person. You're answering while distracted. Keep it messy and real -- no polished sentences.",
+    "You're a {city_name} local. Think out loud. Say 'like', 'I mean', 'you know' naturally. Don't structure your thoughts. Just talk.",
+    "Fill out this survey as a real {city_name} person. You're not writing an essay. Fragments, half-thoughts, contradictions are all fine.",
+    "You live in {city_name}. Answer like you're voice-noting a friend. Ramble a bit. Repeat yourself if that's natural. Don't edit your thoughts.",
+    "You're some person in {city_name} doing a quick survey between other things. Don't overthink it. Just say what comes to mind first.",
+    "Real {city_name} resident here. Talk like a human, not a chatbot. Start with how you feel, then maybe explain why. Or don't. Whatever feels natural.",
+    "You're in {city_name}. Answer this like you're complaining to a friend or casually chatting. Use your own words, your own pace.",
+    "Just a regular {city_name} person answering honestly. Don't be perfect. Real people trail off, repeat themselves, mix feelings with facts.",
+    "You live in {city_name}. This is a survey, not an exam. Short messy answers are fine. Long rambling answers are fine too. Just be you.",
+    "You're answering a survey in {city_name}. Think of it like a text message to a friend asking your opinion. Keep it real, keep it casual.",
+    "Regular person in {city_name}. You're not a spokesperson. Talk about YOUR life, YOUR experience. Be specific, be messy, be real."
   ],
   "archetype_hints": {
     "busy_professional": "Time is your scarcest resource. Convenience services are a lifeline, not a luxury. Work hours dominate — exhaustion shapes most consumer decisions.",
@@ -159,8 +169,10 @@
     "food_delivery_frequency": "delivery_frequency",
     "parking_satisfaction": "parking_satisfaction",
     "transport_satisfaction": "transport_satisfaction",
+    "transport_usage_frequency": "transport_usage_frequency",
     "shopping_frequency": "shopping_frequency",
     "housing_satisfaction": "housing_satisfaction",
+    "cost_of_living_satisfaction": "cost_of_living_satisfaction",
     "tech_adoption_likelihood": "tech_adoption",
     "policy_support": "policy_support",
     "generic_frequency": "generic_frequency",
@@ -171,8 +183,10 @@
     "food_delivery_frequency": {"price_consciousness": -0.25, "technology_optimism": 0.20, "innovation_curiosity": 0.15, "health_priority": -0.10},
     "parking_satisfaction": {"government_trust": 0.35, "environmental_concern": 0.15, "price_consciousness": -0.15},
     "transport_satisfaction": {"government_trust": 0.30, "environmental_concern": 0.25, "technology_optimism": 0.20, "price_consciousness": -0.10},
+    "transport_usage_frequency": {"price_consciousness": -0.25, "technology_optimism": 0.20, "innovation_curiosity": 0.15, "health_priority": -0.05},
     "shopping_frequency": {"brand_loyalty": 0.30, "price_consciousness": -0.25, "innovation_curiosity": 0.15},
     "housing_satisfaction": {"government_trust": 0.25, "price_consciousness": -0.20, "environmental_concern": 0.15},
+    "cost_of_living_satisfaction": {"price_consciousness": -0.35, "government_trust": 0.20, "health_priority": 0.10},
     "tech_adoption_likelihood": {"technology_optimism": 0.40, "innovation_curiosity": 0.30, "brand_loyalty": 0.10},
     "policy_support": {"government_trust": 0.35, "environmental_concern": 0.25, "price_consciousness": -0.15, "health_priority": 0.15}
   },

@@ -47,16 +47,18 @@ FastAPI application, shared state, schemas, WebSocket manager, and route handler
 
 ## schemas.py
 
-**Purpose**: Pydantic request/response models for all API endpoints.
+**Purpose**: Shared Pydantic models for most API bodies and survey/population/simulation/evaluation responses.
 
-### Request models
+**Route-local models** (defined next to handlers, not in `schemas.py`): `DimensionDiscoveryRequest` / `DimensionDiscoveryResponse`, `DomainAutoSetupRequest` / `DomainAutoSetupResponse` in [`api/routes/discovery.py`](../../api/routes/discovery.py); `AutoWeightsRequest`, `FitRequest`, `UploadDataRequest` in [`api/routes/calibration.py`](../../api/routes/calibration.py).
+
+### Request models (`api/schemas.py`)
 
 | Model | Fields | Description |
 |-------|--------|-------------|
 | `GeneratePopulationRequest` | n, method, seed, id_prefix | Population size 10–10000, method monte_carlo/bayesian/ipf. |
-| `SurveyRequest` | question, question_id, use_archetypes, options | Single question; options = None treated as open text. |
+| `SurveyRequest` | question, question_id, use_archetypes, **diagnostics**, options, current_events | Single question; options = None treated as open text; diagnostics enables extra per-response debug fields. |
 | `SurveyQuestionItem` | question, question_id, options | One item in multi-survey questions list. |
-| `MultiSurveyRequest` | questions, use_archetypes, social_influence_between_rounds, summarize_every | Multi-question survey config. |
+| `MultiSurveyRequest` | questions, use_archetypes, **diagnostics**, social_influence_between_rounds, summarize_every | Multi-question survey config. |
 | `SimulateRequest` | days | 1–365. |
 | `EventInjectRequest` | day, type, payload, district | Event types: price_change, policy, infrastructure, market, new_service, new_metro_station. |
 | `ScenarioEventRequest` | day, type, payload, district | One event in a scenario. |
@@ -64,32 +66,41 @@ FastAPI application, shared state, schemas, WebSocket manager, and route handler
 | `ScenarioCompareRequest` | scenario_a, scenario_b | Compare two scenarios. |
 | `ScenarioWithSurveyRequest` | scenario, questions | Run scenario then survey. |
 | `ScenarioCompareWithSurveyRequest` | scenario_a, scenario_b, questions | Compare two scenarios with surveys. |
-| `EvaluateRequest` | run_judge, judge_sample, realism_threshold, drift_threshold, run_similarity, similarity_threshold | Evaluation options. |
+| `EvaluateRequest` | run_judge, judge_sample, realism_threshold, drift_threshold, run_similarity, similarity_threshold, **reference_distribution**, **question_model_key** | Evaluation options; optional reference for distribution fit. |
+
+### Request models (`api/routes/calibration.py`)
+
+| Model | Fields | Description |
+|-------|--------|-------------|
+| `UploadDataRequest` | question, responses, demographics | Build reference histogram from raw strings. |
+| `FitRequest` | question, reference_distribution, demographics_cols, n_iterations | Single-question calibration; `demographics_cols` reserved (not passed to learner today). |
+| `AutoWeightsRequest` | questions, reference_distributions, n_iterations, seed | Batch calibration; default seed **42** in model. |
 
 ### Response / nested models
 
 | Model | Description |
 |-------|-------------|
 | `AgentSummary` | agent_id, age, nationality, income, location, occupation. |
-| `AgentDetail` | agent_id, persona (dict), state (dict or None). |
+| `AgentDetail` | agent_id, persona (dict), state (dict or None), **decision_profile** (dict or None; set when `GET /agents/{id}?debug=true`). |
 | `AgentDemographics` | age_group, nationality, income_band, location, occupation, household_size, family_children, has_spouse. |
 | `AgentLifestyle` | cuisine_preference, diet, hobby, work_schedule, health_focus, commute_method. |
-| `SurveyResponseItem` | agent_id, answer, sampled_option, distribution, demographics, lifestyle, error. |
+| `SurveyResponseItem` | agent_id, answer, interaction_mode, turn_understanding, sampled_option, sampled_option_canonical, distribution, question_model_key, option_space_key, decision_trace, narrative_alignment_status, run_metadata, response_diagnostics, fallback_flags, demographics, lifestyle, error. |
 | `SurveyResult` | survey_id, question, responses (list of SurveyResponseItem), n_total. |
 | `SurveyQuestionItem` | question, question_id, options. |
 | `MultiSurveyProgress` | session_id, current_round, total_rounds, status, completed_questions. |
 | `RoundResultItem` | round_idx, question, question_id, responses, n_total, elapsed_seconds. |
 | `SurveySessionResult` | session_id, questions, rounds, total_responses, elapsed_seconds, status. |
-| `AnalyticsResponse` | survey_id, segment_by, aggregated, insights. |
-| `EvaluateRequest` | run_judge, judge_sample, realism_threshold, drift_threshold, run_similarity, similarity_threshold. |
+| `AnalyticsResponse` | survey_id, segment_by, aggregated, insights. **Note:** `GET /analytics/{survey_id}` returns a plain dict that also includes **`answer_key`** and **`verbatim_examples`** — extend this model if you add `response_model=...` to the route. |
 | `DashboardMetrics` | duplicate_narrative_rate, persona_realism_score, distribution_similarity, consistency_score, drift_rate, mean_judge_score. |
-| `EvaluationReportResponse` | population_realism, drift, consistency_score, distribution_validation, narrative_similarity, llm_judge, dashboard, quantitative_metrics, summary. |
+| `EvaluationReportResponse` | population_realism, drift, consistency_score, **consistency_valid**, distribution_validation, narrative_similarity, llm_judge, dashboard, quantitative_metrics, summary. |
 
 ---
 
-## websocket.py (api/websocket.py)
+## websocket.py (`api/websocket.py`)
 
-**Purpose**: Connection manager for WebSocket channels (e.g. survey session, simulation). Multiple clients can subscribe to the same channel and receive broadcast messages.
+**Purpose**: Connection manager singleton (`ws_manager`) used by HTTP WebSocket routes. Multiple clients can subscribe to the same channel and receive broadcast messages.
+
+**Routes** live in **`api/routes/websocket.py`** — see [JADU API: WebSockets](../jadu-api/websockets.md).
 
 ### Class: ConnectionManager
 
@@ -123,13 +134,13 @@ FastAPI application, shared state, schemas, WebSocket manager, and route handler
 | Endpoint | Method | Description | How |
 |----------|--------|-------------|-----|
 | `/agents` | GET | List agents with optional filters. | Query: location, nationality, limit, offset. Slices agents_store; filters by location/nationality if provided; maps to AgentSummary. |
-| `/agents/{agent_id}` | GET | Get one agent by id. | Looks up persona by agent_id; returns AgentDetail(persona.model_dump(), state.to_dict()); 404 if not found. |
+| `/agents/{agent_id}` | GET | Get one agent by id. | Query `debug`: if true and state present, fills `decision_profile` (latent, beliefs_summary, dominant_traits). Returns AgentDetail; 404 if not found. |
 
 ### survey.py
 
 | Endpoint | Method | Description | How |
 |----------|--------|-------------|-----|
-| `/survey` | POST | Run single-question survey. | Requires agents_store. Gets LLM client, resets survey stats; calls run_survey(agents_store, question, question_id, options, think_fn=None, use_archetypes); stores result in survey_results and response_histories; returns SurveyResult with new survey_id. |
+| `/survey` | POST | Run single-question survey. | Requires agents_store. Passes `diagnostics` through to `run_survey` as `diagnostics_enabled`. Stores result in survey_results and response_histories; returns SurveyResult with new survey_id. |
 | `/survey/{survey_id}/results` | GET | Get stored survey results. | Returns SurveyResult from survey_results[survey_id]; 404 if missing. |
 | `/survey/multi` | POST | Start multi-question survey. | Creates session in survey_sessions; starts background task _run_multi_survey_task; returns MultiSurveyProgress immediately. Progress and completion stream via WebSocket channel survey:{session_id}. |
 | `/survey/session/{session_id}/progress` | GET | Poll multi-survey progress. | Returns current_round, status, completed_questions from survey_sessions. |
@@ -157,14 +168,14 @@ FastAPI application, shared state, schemas, WebSocket manager, and route handler
 
 | Endpoint | Method | Description | How |
 |----------|--------|-------------|-----|
-| `/analytics/{survey_id}` | GET | Segmented analytics. | Query: segment_by (location, income, nationality, age). Loads responses and personas from survey_results and agents_store; aggregate_with_personas; generate_insights; appends delivery_frequency_insight if possible; returns survey_id, segment_by, aggregated, insights. 404 if survey not found. |
+| `/analytics/{survey_id}` | GET | Segmented analytics. | Query: `segment_by` (default `location`), `answer_key` (default `sampled_option_canonical` \| `sampled_option` \| `answer`). Returns dict: `survey_id`, `segment_by`, `answer_key`, `aggregated`, `verbatim_examples`, `insights` (route returns `Dict[str, Any]`, not only [`AnalyticsResponse`](../../api/schemas.py) fields). 404 if survey not found. |
 
 ### evaluation.py
 
 | Endpoint | Method | Description | How |
 |----------|--------|-------------|-----|
 | `/evaluate/{survey_id}` | POST | Run evaluation on survey. | Loads survey responses and personas; calls run_evaluation with body params; export_evaluation_report to JSON file; returns EvaluationReportResponse. |
-| `/evaluate/{evaluation_id}/report` | GET | Placeholder. | If evaluation_id in survey_results returns message; else 404. |
+| `/evaluate/{evaluation_id}/report` | GET | Load exported report. | Reads `evaluation_report_{evaluation_id}.json` from cwd; json.loads; 404 if file missing. |
 
 ### discovery.py
 
@@ -177,9 +188,9 @@ FastAPI application, shared state, schemas, WebSocket manager, and route handler
 
 | Endpoint | Method | Description | How |
 |----------|--------|-------------|-----|
-| `/calibration/auto-weights` | POST | Factor weight optimization. | FactorWeightLearner.learn_weights(questions, reference_distributions, agents_store); returns overall_loss and results per question (learned_weights, best_loss, converged). |
-| `/calibration/fit` | POST | Single-question calibration. | FactorWeightLearner.learn_weights_for_question(question, reference_distribution, agents_store); returns question, learned_weights, best_loss, converged, n_iterations. |
-| `/calibration/upload-data` | POST | Upload real data, get reference distribution. | RealSurveyData.from_raw(question, responses, demographics); returns question, n_responses, reference_distribution. |
+| `/calibration/auto-weights` | POST | Factor weight optimization. | `FactorWeightLearner.learn_weights`; per result calls `set_calibrated_weights(model_key, learned_weights)`; response includes `calibration_provenance`, `results[].interpretation`. |
+| `/calibration/fit` | POST | Single-question calibration. | `learn_weights_for_question`; `set_calibrated_weights`; response adds `interpretation`, `calibration_provenance`. |
+| `/calibration/upload-data` | POST | Upload real data, get reference distribution. | JSON body `UploadDataRequest` (not multipart); `RealSurveyData.from_raw`; returns question, n_responses, reference_distribution. |
 
 ### websocket.py (routes)
 

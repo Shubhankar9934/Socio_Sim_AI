@@ -41,6 +41,18 @@ class Settings(BaseSettings):
     population_size: int = Field(default=500, ge=10, le=100_000)
     max_concurrent_llm_calls: int = Field(default=20, ge=1, le=100)
     simulation_days_default: int = Field(default=30, ge=1, le=365)
+    master_seed: int = Field(
+        default=42,
+        description="Master seed for all deterministic stochastic components",
+    )
+    rng_mode: Literal["strict_seeded", "seeded_with_jitter"] = Field(
+        default="strict_seeded",
+        description="RNG policy mode for simulation components",
+    )
+    allow_unseeded_rng: bool = Field(
+        default=False,
+        description="Allow unseeded RNG creation (debug only)",
+    )
 
     # Archetype compression
     archetype_count: int = Field(default=80, ge=10, le=200)
@@ -49,10 +61,18 @@ class Settings(BaseSettings):
     # LLM generation diversity
     llm_temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     llm_top_p: float = Field(default=0.9, ge=0.0, le=1.0)
+    llm_reasoner_max_tokens: int = Field(
+        default=288, ge=64, le=1024,
+        description="Max completion tokens for survey reasoner (room for 2 sentences + post-edits)",
+    )
 
     # Validation
     population_realism_threshold: float = Field(default=0.85, ge=0.0, le=1.0)
     drift_threshold: float = Field(default=0.3, ge=0.0, le=1.0)
+    strict_mode: bool = Field(
+        default=False,
+        description="Fail fast on missing required references/config instead of silently falling back",
+    )
 
     # ChromaDB
     chroma_persist_dir: str = Field(
@@ -234,6 +254,102 @@ class Settings(BaseSettings):
         default=0.0, ge=0.0, le=1.0,
         description="When > 0, downweight neutral option if second-best prob > 0.4 (0 = off, e.g. 0.3 for emergence test)",
     )
+    decision_noise_budget: float = Field(
+        default=0.15, ge=0.0, le=0.15,
+        description="Max aggregate stochastic perturbation budget in decision pipeline",
+    )
+    decision_sampling_mode: Literal["argmax_if_confident", "top_p_seeded", "deterministic_argmax"] = Field(
+        default="argmax_if_confident",
+        description="Sampling mode for discrete option selection",
+    )
+    decision_confident_threshold: float = Field(
+        default=0.60, ge=0.0, le=1.0,
+        description="Argmax shortcut threshold for argmax_if_confident sampling",
+    )
+    calibration_sample_size_cap: int = Field(
+        default=1000, ge=10, le=10000,
+        description="Maximum agent sample size used by auto-calibration simulation",
+    )
+    decision_entropy_temperature: float = Field(
+        default=0.75, ge=0.3, le=1.5,
+        description="Pre-sampling entropy shaping temperature (<1 sharpens distributions)",
+    )
+    decision_entropy_threshold: float = Field(
+        default=0.82, ge=0.0, le=1.0,
+        description="Normalized entropy threshold used for entropy-aware stochastic sampling",
+    )
+    calibration_blend_alpha: float = Field(
+        default=0.20, ge=0.0, le=0.3,
+        description="Light reference blend strength used in decision-time calibration correction",
+    )
+    calibration_reference_prior_alpha_scale: float = Field(
+        default=0.25, ge=0.0, le=1.0,
+        description="Scale calibration alpha when base prior already came from reference distribution",
+    )
+    anti_collapse_middle_guard_threshold: float = Field(
+        default=0.45, ge=0.35, le=0.9,
+        description="Trigger anti-collapse redistribution when middle option exceeds this probability",
+    )
+    anti_collapse_max_redistribution: float = Field(
+        default=0.18, ge=0.0, le=0.5,
+        description="Maximum mass moved away from middle option by anti-collapse guard",
+    )
+    soft_constraint_multiplier: float = Field(
+        default=0.8, ge=0.7, le=0.9,
+        description="Default multiplier for soft constraints when unspecified",
+    )
+    dominance_fusion_scale: float = Field(
+        default=0.70, ge=0.5, le=1.2,
+        description="Multiplies dominance fusion log-boost strength (lower = softer peaks, fewer anti-collapse rescues)",
+    )
+    dominance_fusion_boost_cap: float = Field(
+        default=0.40, ge=0.2, le=1.5,
+        description="Hard cap on effective dominance boost_strength after scaling (prevents 99% logits from fusion alone)",
+    )
+    nlu_fallback_options_from_model_scale: bool = Field(
+        default=True,
+        description="When caller passes no options but turn is structured survey, use QUESTION_MODELS scale for hybrid NLU context",
+    )
+    log_nlu_missing_options_for_structured_survey: bool = Field(
+        default=False,
+        description="If True, log when structured_response_expected but NLU has zero options after caller+fallback",
+    )
+    clear_turn_understanding_cache_on_survey_start: bool = Field(
+        default=False,
+        description="If True, clear hybrid NLU cache at each run_survey start (after survey_run_id is fixed)",
+    )
+    clear_turn_understanding_cache_on_each_think: bool = Field(
+        default=False,
+        description="If True, clear entire hybrid NLU cache at every AgentCognitiveEngine.think (expensive; scripts only)",
+    )
+    enforce_survey_long_option_char_threshold: int = Field(
+        default=72, ge=24, le=500,
+        description="Sampled options longer than this use compact echo + token overlap in enforce_survey_response",
+    )
+    enforce_survey_compact_echo_max_chars: int = Field(
+        default=70, ge=40, le=200,
+        description="Max chars for compact option prefix when echoing long survey options",
+    )
+    categorical_entropy_floor_alpha: float = Field(
+        default=0.0, ge=0.0, le=0.15,
+        description="If >0, blend uniform mass into non-5-option distributions before sampling (usually leave 0)",
+    )
+
+    # --- Behavior feature flags ---
+    enable_fatigue: bool = Field(default=True, description="Enable fatigue accumulation per turn")
+    enable_emotional_carryover: bool = Field(default=True, description="Enable emotional state updates between turns")
+    enable_micro_contradiction: bool = Field(default=True, description="Enable micro-contradiction injection in realism layer")
+    enable_thinking_markers: bool = Field(default=True, description="Enable thinking-aloud markers (like..., I mean...)")
+    enable_redundancy_injection: bool = Field(default=True, description="Enable natural redundancy in responses")
+    enable_compression_curve: bool = Field(default=True, description="Enable response length compression over turns")
+    enable_context_first_instruction: bool = Field(default=True, description="Enable context-before-answer prompt instruction")
+    enable_emotion_logic_mixing: bool = Field(default=True, description="Enable emotion+logic mixing prompt instruction")
+    enable_life_events_between_rounds: bool = Field(default=True, description="Apply life events between survey rounds")
+
+    simulation_profile: Literal["strict", "realistic", "chaotic"] = Field(
+        default="realistic",
+        description="Simulation preset: strict (deterministic, no stochastic features), realistic (production), chaotic (boosted noise for stress testing)",
+    )
 
     # --- Research layer ---
     research_api_provider: str = Field(
@@ -245,7 +361,38 @@ class Settings(BaseSettings):
     )
 
 
+def apply_simulation_profile(settings: Settings) -> Settings:
+    """Override feature flags based on simulation_profile preset.
+
+    strict  -- all stochastic features disabled, deterministic argmax
+    realistic -- defaults (all features on)
+    chaotic -- boosted noise budget for stress testing
+    """
+    profile = settings.simulation_profile
+    if profile == "strict":
+        overrides = dict(
+            enable_fatigue=False, enable_emotional_carryover=False,
+            enable_micro_contradiction=False, enable_thinking_markers=False,
+            enable_redundancy_injection=False, enable_compression_curve=False,
+            enable_context_first_instruction=False, enable_emotion_logic_mixing=False,
+            enable_life_events_between_rounds=False,
+            decision_sampling_mode="deterministic_argmax",
+            decision_noise_budget=0.0,
+        )
+    elif profile == "chaotic":
+        overrides = dict(
+            decision_noise_budget=0.15,
+            llm_temperature=1.2,
+        )
+    else:
+        return settings
+    for k, v in overrides.items():
+        object.__setattr__(settings, k, v)
+    return settings
+
+
 @lru_cache
 def get_settings() -> Settings:
-    """Cached settings instance."""
-    return Settings()
+    """Cached settings instance with profile applied."""
+    s = Settings()
+    return apply_simulation_profile(s)

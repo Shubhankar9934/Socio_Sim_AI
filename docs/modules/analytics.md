@@ -11,8 +11,9 @@ Response aggregation by segment, automated insights, visualization, and per-step
 | Function | Description | How |
 |----------|-------------|-----|
 | `aggregate_responses(responses, segment_by, answer_key, agent_id_key)` | Group responses by segment and return segment → {answer_value: proportion}. | Builds a DataFrame from responses; if `segment_by` is missing, pulls from nested `persona`; drops NaN; groups by segment and normalizes value_counts per group. |
-| `aggregate_with_personas(responses, personas, segment_by, answer_key)` | Join responses with personas to get segment, then aggregate. | Builds persona_by_id map; enriches each response with persona and explicit location/income/nationality/age; calls `aggregate_responses`. |
-| `frequency_distribution_by_segment(responses, personas, segment_by)` | Convenience wrapper for aggregate_with_personas with answer_key='answer'. | Delegates to `aggregate_with_personas`. |
+| `aggregate_with_personas(responses, personas, segment_by, answer_key)` | Join responses with personas to get segment, then aggregate. | Builds persona_by_id map; enriches each response with persona and explicit location/income/nationality/age; calls `aggregate_responses`. Default `answer_key` in code is `sampled_option_canonical`. |
+| `verbatim_examples_by_segment(responses, personas, segment_by, limit_per_segment)` | Segment → list of example **`answer`** strings (not keyed by option). | Used by [`GET /analytics`](../../api/routes/analytics.py). |
+| `frequency_distribution_by_segment(responses, personas, segment_by)` | Convenience wrapper for `aggregate_with_personas` with `answer_key='answer'`. | Delegates to `aggregate_with_personas`. |
 
 ---
 

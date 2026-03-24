@@ -49,3 +49,15 @@ Media framing, selective exposure, adaptive attention, and belief updates from m
 | Function | Description |
 |----------|-------------|
 | `assign_media_diet(belief_vector, rng)` | Assign media subscriptions (sources) based on belief-aligned homophilic selection. |
+
+---
+
+## strategic.py
+
+**Purpose**: **Strategic media actors** — goal-driven injectors that add targeted [`MediaFrame`](../../media/framing.py) narratives into the ecosystem (`StrategicActor`, `FramingPolicy`, `get_active_actors`, `inject_strategic_frames`). Used from the simulation loop to model campaigns with budgets and demographic targeting; uses seeded RNG via [`core/rng.py`](../core.md).
+
+---
+
+## __init__.py
+
+Package marker.

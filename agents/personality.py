@@ -29,6 +29,14 @@ class PersonalityTraits:
     time_pressure: float = 0.5
     brand_loyalty: float = 0.5
 
+    openness_to_experience: float = 0.5
+    conscientiousness: float = 0.5
+    agreeableness: float = 0.5
+    emotional_stability: float = 0.5
+    extraversion: float = 0.5
+    impulsivity: float = 0.5
+    optimism: float = 0.5
+
 
 def _clamp(v: float) -> float:
     return max(0.0, min(1.0, v))
@@ -74,8 +82,18 @@ def personality_from_persona(persona: Persona) -> PersonalityTraits:
     # --- brand_loyalty: luxury seekers with low price sensitivity tend to be brand-loyal ---
     brand_loyalty = _clamp(ls.luxury_preference * 0.5 + (1.0 - ls.price_sensitivity) * 0.3 + ls.tech_adoption * 0.2)
 
+    pv = getattr(persona, "personality", None)
+    risk_aversion = pv.risk_aversion if pv else 0.5
+    openness = pv.openness_to_experience if pv else 0.5
+    conscientiousness = pv.conscientiousness if pv else 0.5
+    agreeableness = pv.agreeableness if pv else 0.5
+    emotional_stability = pv.emotional_stability if pv else 0.5
+    extraversion_val = pv.extraversion if pv else 0.5
+    impulsivity = pv.impulsivity if pv else 0.5
+    optimism = pv.optimism if pv else 0.5
+
     return PersonalityTraits(
-        risk_aversion=0.5,
+        risk_aversion=risk_aversion,
         convenience_preference=ls.convenience_preference,
         price_sensitivity=ls.price_sensitivity,
         tech_adoption=ls.tech_adoption,
@@ -87,4 +105,11 @@ def personality_from_persona(persona: Persona) -> PersonalityTraits:
         mobility_dependence=mobility_dependence,
         time_pressure=time_pressure,
         brand_loyalty=brand_loyalty,
+        openness_to_experience=openness,
+        conscientiousness=conscientiousness,
+        agreeableness=agreeableness,
+        emotional_stability=emotional_stability,
+        extraversion=extraversion_val,
+        impulsivity=impulsivity,
+        optimism=optimism,
     )

@@ -34,6 +34,7 @@ class CausalGraph:
 
     nodes: List[str] = field(default_factory=list)
     edges: Dict[Tuple[str, str], CausalEdge] = field(default_factory=dict)
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
     _children: Dict[str, List[str]] = field(default_factory=lambda: defaultdict(list))
     _parents: Dict[str, List[str]] = field(default_factory=lambda: defaultdict(list))
@@ -159,6 +160,7 @@ class CausalGraph:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "nodes": self.nodes,
+            "metadata": self.metadata,
             "edges": [
                 {
                     "cause": e.cause,
@@ -173,6 +175,7 @@ class CausalGraph:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> CausalGraph:
         g = cls()
+        g.metadata = dict(data.get("metadata", {}))
         for n in data.get("nodes", []):
             g.add_node(n)
         for e in data.get("edges", []):

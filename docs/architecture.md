@@ -36,6 +36,13 @@ flowchart TB
         perception[agents/perception.py]
         factor_graph[agents/factor_graph.py]
         factors[agents/factors/]
+        intent_router[agents/intent_router.py]
+        response_contract[agents/response_contract.py]
+        context_rel[agents/context_relevance.py]
+    end
+
+    subgraph corepkg [Core]
+        core_rng[core/rng.py]
     end
 
     subgraph llm [LLM Layer]
@@ -47,6 +54,13 @@ flowchart TB
         engine[simulation/engine.py]
         orchestrator[simulation/orchestrator.py]
         survey_engine[simulation/survey_engine.py]
+        coordinator[simulation/coordinator.py]
+        dispatch[simulation/dispatch.py]
+        archetype_runner[simulation/archetype_runner.py]
+    end
+
+    subgraph config_opt [Option spaces]
+        option_space[config/option_space.py]
     end
 
     subgraph social [Social Layer]
@@ -85,8 +99,16 @@ flowchart TB
     cognitive --> prompts
     prompts --> client
     orchestrator --> cognitive
+    orchestrator --> intent_router
+    orchestrator --> response_contract
+    orchestrator --> option_space
+    survey_engine --> coordinator
+    archetype_runner --> orchestrator
+    synthesis --> core_rng
     engine --> network
     engine --> influence
+    cognitive --> context_rel
+    cognitive --> response_contract
 ```
 
 ## API Request Flow
@@ -134,8 +156,9 @@ sequenceDiagram
     Simulation-->>API: agents updated
 
     Client->>API: POST /survey
-    API->>Survey: run_survey(question)
+    API->>Survey: run_survey(question, diagnostics?)
     Survey->>Survey: social warmup, neighbor means
+    Survey->>Survey: intent_router option_space response_contract
     Survey->>Survey: AgentCognitiveEngine.think() per agent
     Survey-->>API: responses
     API-->>Client: survey_id, responses
@@ -159,8 +182,11 @@ flowchart LR
         A[Question] --> B[Perception]
         B --> C[Memory Recall]
         C --> D[Decision]
-        D --> E[LLM Reason]
+        D --> Dc[ResponseContract]
+        Dc --> E[LLM Reason]
         E --> F[Response]
+        D --> Inv[InvariantCheck]
+        Inv --> Dc
     end
 
     B --> B1[Topic/Domain/Scale]
@@ -173,11 +199,13 @@ flowchart LR
 
 **Steps:**
 
-1. **Perception** (`agents/perception.py`): Extract topic, domain, scale type, and question-model key from the question text. Uses keyword matching with optional LLM fallback for unknown questions.
+1. **Hybrid understanding / intent** (`agents/intent_router.py`): Classifies interaction mode, strips or validates qualitative option lists, caches turn understanding per API request; coordinates with perception and LLM fallbacks.
 
-2. **Memory Recall** (`memory/store.py`): Retrieve top-k relevant memories by semantic similarity (ChromaDB) or keyword match (in-memory fallback).
+2. **Perception** (`agents/perception.py`): Extract topic, domain, scale type, and question-model key from the question text. Uses keyword matching with optional LLM fallback for unknown questions.
 
-3. **Decision** (`agents/decision.py`):
+3. **Memory Recall** (`memory/store.py`): Retrieve top-k relevant memories by semantic similarity (ChromaDB) or keyword match (in-memory fallback).
+
+4. **Decision** (`agents/decision.py`):
    - Build `DecisionContext` (persona, traits, perception, friends_using, location_quality, memories, environment)
    - Factor graph computes weighted score from: personality, income, social, location, memory, behavioral, belief
    - Convert to probability distribution via softmax (with per-agent temperature)
@@ -187,9 +215,15 @@ flowchart LR
    - Apply bounded-rational biases (confirmation, loss aversion, anchoring, bandwagon, availability)
    - Sample from distribution (nucleus sampling with resample guard)
 
-4. **LLM Reason** (`llm/prompts.py`): Generate narrative answer from persona + question + sampled option. Uses style profiles, banned-pattern retry, consistency validation.
+5. **Response contract** (`agents/response_contract.py`): Confidence bands, tone, and narrative hints from the **decision** distribution so the LLM layer only renders language, not latent choices.
 
-5. **State Update**: EMA-update `BehavioralLatentState` and `BeliefNetwork`; populate `structured_memory` for cross-question influence.
+6. **Context relevance** (`agents/context_relevance.py`): Tiered inclusion of persona slices in prompts (e.g. lifestyle anchors only when topic matches).
+
+7. **LLM Reason** (`llm/prompts.py`): Generate narrative answer from persona + question + sampled option. Uses style profiles, banned-pattern retry, consistency validation.
+
+8. **Invariants** (`evaluation/invariants.py`): Post-response checks (e.g. memory consistency levels); violations can surface in traces when diagnostics are enabled.
+
+9. **State Update**: EMA-update `BehavioralLatentState` and `BeliefNetwork`; populate `structured_memory` for cross-question influence. **Memory manager** (`agents/memory_manager.py`) compresses tiers across long sessions.
 
 ## Simulation 13-Step Daily Loop
 
@@ -267,8 +301,9 @@ For `POST /survey/multi`:
 1. **SurveyEngine** schedules rounds on an `EventDrivenScheduler` timeline
 2. Each round: `run_survey()` → all agents answer one question
 3. Between rounds: social diffusion (vectorized or hybrid archetype), memory summarization
-4. Optional: periodic archetype reclustering to track evolving behavior
-5. Progress streams via WebSocket; results stored per round
+4. **SimulationCoordinator** (`simulation/coordinator.py`) can assess population-level distribution health and cross-round invariants (see `evaluation/invariants.check_population_invariants`)
+5. Optional: periodic archetype reclustering to track evolving behavior
+6. Progress streams via WebSocket (`/ws/survey/{session_id}`); results stored per round
 
 ## Archetype Compression
 
@@ -307,7 +342,9 @@ After a survey is run, evaluation produces a report (realism, drift, consistency
 5. **Distribution validation**: `validate_survey_distribution(responses, reference)` → aggregate_survey_distribution, compare_to_reference (JS, chi-square) → passed, js_similarity.
 6. **Narrative similarity**: If run_similarity, extract narrative answers; `compute_narrative_similarity(narratives, threshold)` → embeddings, cosine similarity → duplicate_rate, flagged_pairs.
 7. **LLM judge** (optional): If run_judge, sample agents; `judge_responses_batch(personas, questions, responses, sample_size)` → judge_response per sample (realism, persona_consistency, cultural_plausibility 1–5).
-8. **Output**: Dashboard (duplicate_narrative_rate, persona_realism_score, distribution_similarity, consistency_score, drift_rate, mean_judge_score), quantitative_metrics pass/fail vs QUALITY_TARGETS, summary. Report can be exported to JSON via export_evaluation_report.
+8. **Output**: Dashboard (duplicate_narrative_rate, persona_realism_score, distribution_similarity, consistency_score, drift_rate, mean_judge_score), quantitative_metrics pass/fail vs QUALITY_TARGETS, summary, `consistency_valid`. Report can be exported to JSON via export_evaluation_report.
+
+**Runtime metrics** (`evaluation/runtime_metrics.py`): `MetricsCollector` / `SessionMetrics` aggregate per-trace stats during long runs (duplicate rate, invariant violations, intent distribution) — complementary to this post-hoc report.
 
 ## End-to-End Project Flow
 

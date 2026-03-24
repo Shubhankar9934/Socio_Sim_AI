@@ -45,7 +45,7 @@ Server: `http://0.0.0.0:8000`. Docs: `http://localhost:8000/docs`.
    `POST /simulation` with `{"days": 30}` to update social influence and state.
 
 3. **Run survey**  
-   `POST /survey` with `{"question": "How often do you order food delivery?"}`. Returns `survey_id`.
+   `POST /survey` with `{"question": "How often do you order food delivery?", "diagnostics": false}`. Set `"diagnostics": true` for extra per-agent debug fields. Returns `survey_id`.
 
 4. **Get analytics**  
    `GET /analytics/{survey_id}?segment_by=location`.
@@ -53,7 +53,13 @@ Server: `http://0.0.0.0:8000`. Docs: `http://localhost:8000/docs`.
 5. **Evaluate**  
    `POST /evaluate/{survey_id}` with `{"run_judge": false}` (or `true` for LLM judge).
 
+### NLU cache and multi-survey runs
+
+Hybrid question understanding (`build_turn_understanding_hybrid`) caches results in-process. Each `POST /survey` call gets a fresh `survey_run_id` so batches do not reuse understanding from an earlier API request. For long-lived Python processes (notebooks, custom scripts), pass `survey_run_id=` into [`run_survey`](simulation/orchestrator.py) or call `clear_turn_understanding_cache()` from [`agents.intent_router`](agents/intent_router.py) between studies.
+
 ## Deep-dive API docs (JADU_Full_API)
+
+**Vision and scope:** [docs/vision-and-goals.md](docs/vision-and-goals.md). **Curated JSON examples:** [docs/examples/](docs/examples/).
 
 Per-area documentation with request/response fields, code flow, and how outputs are computed: **[docs/jadu-api/](docs/jadu-api/)** (also in the **MkDocs** site / GitHub Pages under *JADU API reference (Postman)*). A short pointer remains at [docs2/README.md](docs2/README.md).
 
@@ -68,13 +74,16 @@ Per-area documentation with request/response fields, code flow, and how outputs 
 | POST | /calibration/upload-data | Upload real survey data, get reference distribution |
 | POST | /population/generate | Generate synthetic population (n, method, seed) |
 | GET | /agents | List agents (filter by location, nationality) |
-| GET | /agents/{id} | Agent detail (persona + state) |
-| POST | /survey | Run survey; returns survey_id and responses |
+| GET | /agents/{id} | Agent detail (persona + state); `?debug=true` adds `decision_profile` |
+| POST | /survey | Run survey; optional `diagnostics`, `use_archetypes`, `current_events` |
 | GET | /survey/{id}/results | Get survey results by id |
+| POST | /survey/multi | Multi-question session; progress via `WS /ws/survey/{session_id}` |
+| WS | /ws/survey/{session_id} | Round/session events during multi-survey (see [docs/jadu-api/websockets.md](docs/jadu-api/websockets.md)) |
+| WS | /ws/simulation | Simulation commands (inject_event, status); see websockets doc |
 | POST | /simulation | Run N days of simulation |
 | GET | /simulation/status | Population size and graph status |
 | GET | /analytics/{survey_id} | Segmented analytics and insights |
-| POST | /evaluate/{survey_id} | Run evaluation (realism, drift, optional judge) |
+| POST | /evaluate/{survey_id} | Evaluation; optional `reference_distribution`, `question_model_key` in body |
 | GET | /evaluate/{id}/report | Placeholder for stored report |
 
 ## Project layout
@@ -83,8 +92,9 @@ Per-area documentation with request/response fields, code flow, and how outputs 
 - `data/domains/` – Domain configs per city (domain.json, demographics.json, reference_distributions.json).
 - `discovery/` – Dimension discovery, domain auto-setup, action inference.
 - `causal/` – Causal learner and graph.
-- `population/` – Synthesis (Monte Carlo, IPF, Bayesian), personas, validator.
-- `agents/` – Cognitive pipeline (perception, personality, decision, state).
+- `population/` – Synthesis (Monte Carlo, IPF, Bayesian), personas, validator, constraints, lazy store, life paths.
+- `core/` – Seeded RNG helpers for reproducible stochastic behavior.
+- `agents/` – Cognitive pipeline (perception, intent routing, response contract, personality, decision, state, memory tiers).
 - `llm/` – OpenAI client (rate-limited), prompts, reasoner.
 - `social/` – Network (Barabasi-Albert), influence (opinion diffusion).
 - `world/` – City graph, districts, economy, events.
@@ -104,7 +114,9 @@ Per-area documentation with request/response fields, code flow, and how outputs 
 
 Full documentation is in `docs/`:
 
+- **Vision** – [docs/vision-and-goals.md](docs/vision-and-goals.md)
 - **Overview** – [docs/index.md](docs/index.md), [docs/overview.md](docs/overview.md), [docs/architecture.md](docs/architecture.md)
+- **Maintainers** – [docs/DOC_INVENTORY.md](docs/DOC_INVENTORY.md) (routes ↔ docs ↔ tests)
 - **MkDocs** – Build the docs site with `mkdocs serve` (see `mkdocs.yml`). Install dependencies with `pip install -r requirements-docs.txt` if present, then open http://127.0.0.1:8000
 - **Module reference** – `docs/modules/` (one file per module: agents, api, calibration, config, discovery, etc.)
 

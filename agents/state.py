@@ -56,8 +56,33 @@ class AgentState:
     cooldown_topics: Dict[str, int] = field(default_factory=dict)
     fatigue_history: List[Dict[str, Any]] = field(default_factory=list)
 
+    # Layered memory system
+    medium_term_memory: List[str] = field(default_factory=list)
+    long_term_preferences: Dict[str, float] = field(default_factory=dict)
+
     # Media exposure
     media_exposure_history: List[Any] = field(default_factory=list)
+    interaction_mode: str = "survey"
+    recent_interaction_modes: List[str] = field(default_factory=list)
+    recent_utterances: List[str] = field(default_factory=list)
+
+    # Identity drift prevention
+    identity_anchor: Optional[List[float]] = None
+    anchor_elasticity: float = 0.15
+
+    # Temporal identity evolution
+    identity_version: int = 0
+    identity_shift_log: List[Dict[str, Any]] = field(default_factory=list)
+
+    # Conversation flow: turn tracking, fatigue, emotional carryover
+    turn_count: int = 0
+    fatigue: float = 0.0
+    emotional_state: str = "neutral"
+    question_history: Dict[str, str] = field(default_factory=dict)
+    # Isolates hybrid NLU cache entries per orchestrator/API batch (optional).
+    survey_run_id: Optional[str] = None
+    # Current survey question id for hybrid NLU cache key (set in think() / runners).
+    nlu_question_id: Optional[str] = None
 
     # Backward-compat aliases
     @property
@@ -89,6 +114,8 @@ class AgentState:
             "identity": self.identity.to_dict(),
             "last_answers": self.last_answers,
             "structured_memory": dict(self.structured_memory),
+            "medium_term_memory": list(self.medium_term_memory),
+            "long_term_preferences": dict(self.long_term_preferences),
             "dialogue_summary": self.dialogue_summary,
             "life_event_history": list(self.life_event_history),
             "social_trait_fraction": self.social_trait_fraction,
@@ -97,6 +124,13 @@ class AgentState:
             "base_malleability": self.base_malleability,
             "calcification": self.calcification,
             "activation": dict(self.activation),
+            "interaction_mode": self.interaction_mode,
+            "recent_interaction_modes": list(self.recent_interaction_modes),
+            "recent_utterances": list(self.recent_utterances),
+            "turn_count": self.turn_count,
+            "fatigue": self.fatigue,
+            "emotional_state": self.emotional_state,
+            "identity_version": self.identity_version,
         }
 
     @classmethod
@@ -118,6 +152,8 @@ class AgentState:
         openness = persona.lifestyle.tech_adoption
         malleability = max(0.1, min(0.9, 0.3 + 0.4 * openness))
 
+        anchor = latent.to_vector().tolist()
+
         return cls(
             agent_id=persona.agent_id,
             latent_state=latent,
@@ -127,6 +163,7 @@ class AgentState:
             habit_profile=habits,
             base_malleability=malleability,
             social_trait_fraction=0.0,
+            identity_anchor=anchor,
         )
 
     def update_after_answer(
@@ -191,6 +228,29 @@ class AgentState:
         summary = "; ".join(f"{k}: {v}" for k, v in items)
         self.dialogue_summary = summary[:max_summary_length]
 
+    def recent_interaction_mode(self, default: str = "conversation") -> str:
+        if self.recent_interaction_modes:
+            return str(self.recent_interaction_modes[-1] or default)
+        return str(self.interaction_mode or default)
+
+    def record_interaction(
+        self,
+        utterance: str,
+        mode: str,
+        *,
+        max_turns: int = 8,
+    ) -> None:
+        clean_mode = str(mode or "").strip() or "conversation"
+        clean_utterance = " ".join(str(utterance or "").strip().split())
+        self.interaction_mode = clean_mode
+        self.recent_interaction_modes.append(clean_mode)
+        if len(self.recent_interaction_modes) > max_turns:
+            self.recent_interaction_modes = self.recent_interaction_modes[-max_turns:]
+        if clean_utterance:
+            self.recent_utterances.append(clean_utterance)
+            if len(self.recent_utterances) > max_turns:
+                self.recent_utterances = self.recent_utterances[-max_turns:]
+
     def build_structured_context(self) -> Dict[str, Any]:
         """Return a compact dict of agent state for LLM prompt injection.
 
@@ -208,6 +268,7 @@ class AgentState:
         belief_dict = self.beliefs.to_dict()
         ctx["belief_technology_optimism"] = belief_dict.get("technology_optimism")
         ctx["belief_price_consciousness"] = belief_dict.get("price_consciousness")
+        ctx["interaction_mode"] = self.interaction_mode
         if self.dialogue_summary:
             ctx["recent_answers_summary"] = self.dialogue_summary
         return ctx

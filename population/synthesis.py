@@ -8,10 +8,11 @@ to prevent implausible combinations (e.g. 18-year-old with 5 children).
 """
 
 import random
-from typing import Dict, List, Literal
+from typing import Dict, List, Literal, Set, Tuple
 
 import numpy as np
 
+from core.rng import agent_rng_pack, agent_seed_from_id, ensure_py_rng, make_rng_pack
 from config.demographics import get_demographics
 from population.personas import (
     FamilyStructure,
@@ -19,20 +20,27 @@ from population.personas import (
     MobilityProfile,
     Persona,
     PersonalAnchors,
+    PersonalityVector,
     PersonaMeta,
 )
 
 
-def _weighted_choice(dist: Dict[str, float], rng: random.Random | None = None) -> str:
+def _weighted_choice(
+    dist: Dict[str, float],
+    rng: random.Random | None = None,
+    np_rng: np.random.Generator | None = None,
+) -> str:
     """Sample one key from a distribution (values = probabilities)."""
     items = list(dist.keys())
     weights = list(dist.values())
     total = sum(weights)
     if total <= 0:
-        r = rng or random.Random()
+        r = ensure_py_rng(rng, key="population_weighted_choice_fallback")
         return r.choice(items)
     probs = [w / total for w in weights]
-    return np.random.choice(items, p=probs)
+    if np_rng is None:
+        _, np_rng = _local_rng_pair("population_weighted_choice")
+    return str(np_rng.choice(items, p=probs))
 
 
 _CATEGORICAL_NOISE_STD = 0.05
@@ -41,6 +49,7 @@ _CATEGORICAL_NOISE_STD = 0.05
 def _noisy_weighted_choice(
     dist: Dict[str, float],
     rng: random.Random | None = None,
+    np_rng: np.random.Generator | None = None,
 ) -> str:
     """Sample with small Gaussian noise injected into the distribution.
 
@@ -50,29 +59,43 @@ def _noisy_weighted_choice(
     """
     items = list(dist.keys())
     weights = np.array(list(dist.values()), dtype=np.float64)
-    r = rng or random.Random()
+    r = ensure_py_rng(rng, key="population_noisy_weighted_choice_noise")
     noise = np.array([r.gauss(0, _CATEGORICAL_NOISE_STD) for _ in weights])
     weights = np.clip(weights + noise, 0.01, None)
     weights = weights / weights.sum()
-    return str(np.random.choice(items, p=weights))
+    if np_rng is None:
+        _, np_rng = _local_rng_pair("population_noisy_weighted_choice")
+    return str(np_rng.choice(items, p=weights))
 
 
-def _sample_income_given_nationality(nationality: str, rng: random.Random | None = None) -> str:
+def _sample_income_given_nationality(
+    nationality: str,
+    rng: random.Random | None = None,
+    np_rng: np.random.Generator | None = None,
+) -> str:
     demo = get_demographics()
     dist = demo.income_given_nationality.get(nationality, demo.income)
-    return _noisy_weighted_choice(dist, rng)
+    return _noisy_weighted_choice(dist, rng, np_rng=np_rng)
 
 
-def _sample_location_given_income(income: str, rng: random.Random | None = None) -> str:
+def _sample_location_given_income(
+    income: str,
+    rng: random.Random | None = None,
+    np_rng: np.random.Generator | None = None,
+) -> str:
     demo = get_demographics()
     dist = demo.location_given_income.get(income, demo.location)
-    return _noisy_weighted_choice(dist, rng)
+    return _noisy_weighted_choice(dist, rng, np_rng=np_rng)
 
 
-def _sample_occupation_given_nationality(nationality: str, rng: random.Random | None = None) -> str:
+def _sample_occupation_given_nationality(
+    nationality: str,
+    rng: random.Random | None = None,
+    np_rng: np.random.Generator | None = None,
+) -> str:
     demo = get_demographics()
     dist = demo.occupation_given_nationality.get(nationality, demo.occupation)
-    return _noisy_weighted_choice(dist, rng)
+    return _noisy_weighted_choice(dist, rng, np_rng=np_rng)
 
 
 # ---------------------------------------------------------------------------
@@ -195,6 +218,101 @@ _HEALTH_FOCUS_POOL = [
 ]
 
 
+_SECONDARY_HOBBY_POOL: List[tuple[str, float]] = [
+    ("", 0.40),
+    ("board games", 0.04), ("volunteering", 0.03), ("birdwatching", 0.02),
+    ("pottery", 0.02), ("baking", 0.04), ("karaoke", 0.03),
+    ("DIY projects", 0.03), ("journaling", 0.02), ("meditation", 0.03),
+    ("rock climbing", 0.02), ("badminton", 0.02), ("bowling", 0.02),
+    ("billiards", 0.01), ("archery", 0.01), ("skateboarding", 0.01),
+    ("podcasts", 0.04), ("standup comedy", 0.02), ("wine tasting", 0.01),
+    ("woodworking", 0.01), ("origami", 0.005), ("stargazing", 0.01),
+    ("scuba diving", 0.005), ("paintball", 0.005), ("collecting sneakers", 0.01),
+    ("crypto trading", 0.01), ("content creation", 0.02), ("vlogging", 0.01),
+    ("learning languages", 0.02), ("trivia nights", 0.02),
+]
+
+_WEEKEND_HABIT_POOL: List[tuple[str, float]] = [
+    ("relaxing at home", 0.20), ("visiting malls", 0.10), ("brunch with friends", 0.08),
+    ("family outings", 0.10), ("sleeping in", 0.08), ("binge-watching shows", 0.07),
+    ("going to the beach", 0.05), ("road trips", 0.04), ("exploring cafes", 0.05),
+    ("attending events", 0.03), ("cooking at home", 0.05), ("playing sports", 0.04),
+    ("visiting relatives", 0.04), ("grocery shopping", 0.03), ("religious activities", 0.04),
+]
+
+_SPENDING_PATTERN_POOL: List[tuple[str, float]] = [
+    ("balanced", 0.25), ("frugal", 0.15), ("spender", 0.12),
+    ("impulse buyer", 0.08), ("deal hunter", 0.12), ("save-first", 0.10),
+    ("experiential", 0.08), ("brand loyal", 0.05), ("minimalist", 0.05),
+]
+
+_SOCIAL_MEDIA_POOL: List[tuple[str, float]] = [
+    ("", 0.15), ("Instagram", 0.18), ("TikTok", 0.12), ("Facebook", 0.10),
+    ("YouTube", 0.12), ("Twitter/X", 0.06), ("Snapchat", 0.05),
+    ("LinkedIn", 0.06), ("Reddit", 0.04), ("WhatsApp groups", 0.08),
+    ("Pinterest", 0.02), ("Telegram", 0.02),
+]
+
+_PET_POOL: List[tuple[str, float]] = [
+    ("none", 0.60), ("cat", 0.12), ("dog", 0.10), ("fish", 0.05),
+    ("bird", 0.04), ("hamster", 0.02), ("rabbit", 0.02),
+    ("turtle", 0.01), ("multiple pets", 0.04),
+]
+
+_MUSIC_POOL: List[tuple[str, float]] = [
+    ("", 0.15), ("pop", 0.14), ("hip-hop", 0.10), ("rock", 0.07),
+    ("Arabic music", 0.08), ("Bollywood", 0.08), ("EDM", 0.06),
+    ("classical", 0.04), ("R&B", 0.05), ("jazz", 0.03),
+    ("K-pop", 0.04), ("country", 0.02), ("metal", 0.02),
+    ("lo-fi", 0.04), ("reggaeton", 0.03), ("acoustic", 0.03),
+    ("Afrobeats", 0.02),
+]
+
+_READING_POOL: List[tuple[str, float]] = [
+    ("", 0.30), ("news apps", 0.12), ("social media feeds", 0.10),
+    ("novels", 0.08), ("self-help", 0.07), ("business books", 0.06),
+    ("manga/comics", 0.04), ("religious texts", 0.05), ("science fiction", 0.04),
+    ("magazines", 0.03), ("audiobooks", 0.04), ("poetry", 0.02),
+    ("true crime", 0.03), ("sports news", 0.02),
+]
+
+
+def _generate_personality_vector(
+    persona_seed: int,
+    age: str,
+    income: str,
+    occupation: str,
+) -> PersonalityVector:
+    """Generate a per-agent personality vector with demographic-conditioned means + noise."""
+    rng = random.Random(persona_seed)
+
+    age_min = int(age.replace("+", "").split("-")[0])
+    income_high = income in ("25-50k", "50k+")
+
+    risk_mean = 0.4 + 0.005 * min(age_min, 55)
+    openness_mean = 0.55 - 0.003 * min(age_min, 55) + (0.1 if income_high else 0)
+    conscientious_mean = 0.45 + 0.003 * min(age_min, 55)
+    agree_mean = 0.50
+    stability_mean = 0.40 + 0.004 * min(age_min, 55)
+    extraversion_mean = 0.50 + (0.05 if occupation in ("managerial", "service") else 0)
+    impulsivity_mean = 0.55 - 0.004 * min(age_min, 55)
+    optimism_mean = 0.50 + (0.05 if income_high else -0.03)
+
+    def _draw(mean: float) -> float:
+        return max(0.0, min(1.0, mean + (rng.random() - 0.5) * 0.4))
+
+    return PersonalityVector(
+        risk_aversion=_draw(risk_mean),
+        openness_to_experience=_draw(openness_mean),
+        conscientiousness=_draw(conscientious_mean),
+        agreeableness=_draw(agree_mean),
+        emotional_stability=_draw(stability_mean),
+        extraversion=_draw(extraversion_mean),
+        impulsivity=_draw(impulsivity_mean),
+        optimism=_draw(optimism_mean),
+    )
+
+
 def _sample_weighted_tuples(pool: List[tuple[str, float]], rng: random.Random) -> str:
     items = [t[0] for t in pool]
     weights = [t[1] for t in pool]
@@ -252,14 +370,29 @@ def _personal_anchors_from_demographics(
 
     health_focus = _sample_weighted_tuples(_HEALTH_FOCUS_POOL, rng)
 
+    secondary_hobby = _sample_weighted_tuples(_SECONDARY_HOBBY_POOL, rng)
+    weekend_habit = _sample_weighted_tuples(_WEEKEND_HABIT_POOL, rng)
+    spending_pattern = _sample_weighted_tuples(_SPENDING_PATTERN_POOL, rng)
+    social_media = _sample_weighted_tuples(_SOCIAL_MEDIA_POOL, rng)
+    pet = _sample_weighted_tuples(_PET_POOL, rng)
+    music = _sample_weighted_tuples(_MUSIC_POOL, rng)
+    reading = _sample_weighted_tuples(_READING_POOL, rng)
+
     return PersonalAnchors(
         cuisine_preference=cuisine,
         diet=diet,
         hobby=hobby,
+        secondary_hobby=secondary_hobby,
         work_schedule=work_schedule,
         typical_dinner_time=dinner_time,
         commute_method=commute,
         health_focus=health_focus,
+        weekend_habit=weekend_habit,
+        spending_pattern=spending_pattern,
+        social_media_preference=social_media,
+        pet=pet,
+        music_preference=music,
+        reading_preference=reading,
     )
 
 
@@ -366,6 +499,52 @@ def _sample_household_size(age: str) -> str:
     return _weighted_choice(dist)
 
 
+def _local_rng_pair(key: str, seed: int | None = None) -> tuple[random.Random, np.random.Generator]:
+    pack = make_rng_pack(key, base_seed=seed)
+    return pack.py_rng, pack.np_rng
+
+
+# ---------------------------------------------------------------------------
+# Demographic-tuple uniqueness helpers
+# ---------------------------------------------------------------------------
+
+def _demo_tuple(p: Persona) -> Tuple[str, ...]:
+    """Fingerprint for collision detection on core demographics."""
+    return (
+        p.age, p.nationality, p.income, p.location, p.occupation,
+        p.household_size, str(p.family.spouse), str(p.family.children),
+    )
+
+
+def _ensure_uniqueness(
+    personas: List[Persona],
+    seed: int | None = None,
+) -> List[Persona]:
+    """Inject diversity salt into lifestyle coefficients of colliding personas.
+
+    After generation, if two personas share the exact same demographic
+    tuple their lifestyle coefficients are jittered so the decision
+    pipeline still differentiates them.
+    """
+    seen: Dict[Tuple[str, ...], int] = {}
+    for p in personas:
+        key = _demo_tuple(p)
+        count = seen.get(key, 0)
+        if count > 0:
+            pack = agent_rng_pack(f"{p.agent_id}:salt:{count}", base_seed=seed)
+            r = pack.py_rng
+            ls = p.lifestyle
+            salt = 0.08 * count
+            ls.luxury_preference = max(0.0, min(1.0, ls.luxury_preference + (r.random() - 0.5) * salt))
+            ls.tech_adoption = max(0.0, min(1.0, ls.tech_adoption + (r.random() - 0.5) * salt))
+            ls.dining_out = max(0.0, min(1.0, ls.dining_out + (r.random() - 0.5) * salt))
+            ls.convenience_preference = max(0.0, min(1.0, ls.convenience_preference + (r.random() - 0.5) * salt))
+            ls.price_sensitivity = max(0.0, min(1.0, ls.price_sensitivity + (r.random() - 0.5) * salt))
+            ls.primary_service_preference = max(0.0, min(1.0, ls.primary_service_preference + (r.random() - 0.5) * salt))
+        seen[key] = count + 1
+    return personas
+
+
 # ---------------------------------------------------------------------------
 # Monte Carlo: independent weighted sampling from marginals
 # ---------------------------------------------------------------------------
@@ -384,16 +563,17 @@ def generate_monte_carlo(
             id_prefix = get_domain_config().id_prefix
         except Exception:
             id_prefix = "AGT"
-    rng = random.Random(seed)
+    rng, np_rng = _local_rng_pair("population_monte_carlo", seed=seed)
     personas: List[Persona] = []
     for i in range(n):
         agent_id = f"{id_prefix}_{i:04d}"
-        age = _weighted_choice(demo.age)
-        nationality = _weighted_choice(demo.nationality)
-        income = _weighted_choice(demo.income)
-        location = _weighted_choice(demo.location)
-        household_size = _sample_household_size(age)
-        occupation = _weighted_choice(demo.occupation)
+        agent_hash_seed = agent_seed_from_id(agent_id, base_seed=seed)
+        age = _weighted_choice(demo.age, rng=rng, np_rng=np_rng)
+        nationality = _weighted_choice(demo.nationality, rng=rng, np_rng=np_rng)
+        income = _weighted_choice(demo.income, rng=rng, np_rng=np_rng)
+        location = _weighted_choice(demo.location, rng=rng, np_rng=np_rng)
+        household_size = _weighted_choice(HOUSEHOLD_GIVEN_AGE.get(age, demo.household_size), rng=rng, np_rng=np_rng)
+        occupation = _weighted_choice(demo.occupation, rng=rng, np_rng=np_rng)
 
         family = _family_from_household(household_size, age, nationality, rng)
         mobility = _mobility_from_location(location, rng)
@@ -402,6 +582,7 @@ def generate_monte_carlo(
             nationality, occupation, income, location, mobility, rng,
         )
 
+        personality = _generate_personality_vector(agent_hash_seed, age, income, occupation)
         p = Persona(
             agent_id=agent_id,
             age=age,
@@ -414,7 +595,8 @@ def generate_monte_carlo(
             mobility=mobility,
             lifestyle=lifestyle,
             personal_anchors=anchors,
-            meta=PersonaMeta(synthesis_method="monte_carlo", generation_seed=seed + i if seed is not None else None),
+            personality=personality,
+            meta=PersonaMeta(synthesis_method="monte_carlo", generation_seed=agent_hash_seed),
         )
         personas.append(p)
     return personas
@@ -438,16 +620,16 @@ def generate_bayesian(
             id_prefix = get_domain_config().id_prefix
         except Exception:
             id_prefix = "AGT"
-    rng = random.Random(seed)
+    rng, np_rng = _local_rng_pair("population_bayesian", seed=seed)
     personas = []
     for i in range(n):
         agent_id = f"{id_prefix}_{i:04d}"
-        age = _weighted_choice(demo.age)
-        nationality = _weighted_choice(demo.nationality)
-        income = _sample_income_given_nationality(nationality, rng)
-        location = _sample_location_given_income(income, rng)
-        household_size = _sample_household_size(age)
-        occupation = _sample_occupation_given_nationality(nationality, rng)
+        age = _weighted_choice(demo.age, rng=rng, np_rng=np_rng)
+        nationality = _weighted_choice(demo.nationality, rng=rng, np_rng=np_rng)
+        income = _sample_income_given_nationality(nationality, rng, np_rng=np_rng)
+        location = _sample_location_given_income(income, rng, np_rng=np_rng)
+        household_size = _weighted_choice(HOUSEHOLD_GIVEN_AGE.get(age, demo.household_size), rng=rng, np_rng=np_rng)
+        occupation = _sample_occupation_given_nationality(nationality, rng, np_rng=np_rng)
 
         family = _family_from_household(household_size, age, nationality, rng)
         mobility = _mobility_from_location(location, rng)
@@ -456,6 +638,8 @@ def generate_bayesian(
             nationality, occupation, income, location, mobility, rng,
         )
 
+        agent_hash_seed = agent_seed_from_id(agent_id, base_seed=seed)
+        personality = _generate_personality_vector(agent_hash_seed, age, income, occupation)
         p = Persona(
             agent_id=agent_id,
             age=age,
@@ -468,7 +652,8 @@ def generate_bayesian(
             mobility=mobility,
             lifestyle=lifestyle,
             personal_anchors=anchors,
-            meta=PersonaMeta(synthesis_method="bayesian", generation_seed=seed + i if seed is not None else None),
+            personality=personality,
+            meta=PersonaMeta(synthesis_method="bayesian", generation_seed=agent_hash_seed),
         )
         personas.append(p)
     return personas
@@ -519,7 +704,7 @@ def generate_ipf(
             id_prefix = get_domain_config().id_prefix
         except Exception:
             id_prefix = "AGT"
-    rng = random.Random(seed)
+    rng, np_rng = _local_rng_pair("population_ipf", seed=seed)
     age_keys = demo.get_age_keys()
     nat_keys = demo.get_nationality_keys()
     row_target = np.array([demo.age[k] for k in age_keys])
@@ -535,15 +720,15 @@ def generate_ipf(
         agent_id = f"{id_prefix}_{i:04d}"
         # Sample (age, nationality) from joint
         flat = matrix.flatten()
-        idx = np.random.choice(len(flat), p=flat)
+        idx = int(np_rng.choice(len(flat), p=flat))
         ai, ni = np.unravel_index(idx, matrix.shape)
         age = age_keys[ai]
         nationality = nat_keys[ni]
 
-        income = _sample_income_given_nationality(nationality, rng)
-        location = _sample_location_given_income(income, rng)
-        household_size = _sample_household_size(age)
-        occupation = _sample_occupation_given_nationality(nationality, rng)
+        income = _sample_income_given_nationality(nationality, rng, np_rng=np_rng)
+        location = _sample_location_given_income(income, rng, np_rng=np_rng)
+        household_size = _weighted_choice(HOUSEHOLD_GIVEN_AGE.get(age, demo.household_size), rng=rng, np_rng=np_rng)
+        occupation = _sample_occupation_given_nationality(nationality, rng, np_rng=np_rng)
 
         family = _family_from_household(household_size, age, nationality, rng)
         mobility = _mobility_from_location(location, rng)
@@ -552,6 +737,8 @@ def generate_ipf(
             nationality, occupation, income, location, mobility, rng,
         )
 
+        agent_hash_seed = agent_seed_from_id(agent_id, base_seed=seed)
+        personality = _generate_personality_vector(agent_hash_seed, age, income, occupation)
         p = Persona(
             agent_id=agent_id,
             age=age,
@@ -564,7 +751,8 @@ def generate_ipf(
             mobility=mobility,
             lifestyle=lifestyle,
             personal_anchors=anchors,
-            meta=PersonaMeta(synthesis_method="ipf", generation_seed=seed + i if seed is not None else None),
+            personality=personality,
+            meta=PersonaMeta(synthesis_method="ipf", generation_seed=agent_hash_seed),
         )
         personas.append(p)
     return personas
@@ -625,12 +813,16 @@ def _stamp_narrative_styles(personas: List[Persona], seed: int | None = None) ->
     for p in personas:
         profile = derive_narrative_style_profile(
             p.age, p.income, p.occupation, p.nationality, rng,
+            personality=p.personality,
         )
         p.personal_anchors.narrative_style.verbosity = profile.verbosity
         p.personal_anchors.narrative_style.preferred_tone = profile.preferred_tone
         p.personal_anchors.narrative_style.preferred_style = profile.preferred_style
         p.personal_anchors.narrative_style.slang_level = profile.slang_level
         p.personal_anchors.narrative_style.grammar_quality = profile.grammar_quality
+        p.personal_anchors.narrative_style.voice_register = profile.voice_register
+        p.personal_anchors.narrative_style.rhetorical_habit = profile.rhetorical_habit
+        p.personal_anchors.narrative_style.avoid_phrases = list(profile.avoid_phrases)
     return personas
 
 
@@ -649,10 +841,15 @@ def generate_population(
         personas = generate_ipf(n, seed=seed, id_prefix=id_prefix)
     else:
         raise ValueError(f"Unknown method: {method}")
+    personas = _ensure_uniqueness(personas, seed=seed)
+    from population.constraints import validate_and_repair_all
+    personas = validate_and_repair_all(personas, seed=seed)
     personas = _stamp_archetypes(personas)
     personas = _stamp_segments(personas, seed=seed)
     personas = _stamp_narrative_styles(personas, seed=seed)
     personas = _stamp_media_subscriptions(personas, seed=seed)
+    from population.life_path import stamp_life_paths
+    personas = stamp_life_paths(personas, seed=seed)
     return personas
 
 

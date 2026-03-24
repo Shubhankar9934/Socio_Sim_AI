@@ -15,6 +15,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 
+from agents.response_contract import build_response_contract
 from config.settings import get_settings
 from simulation.archetypes import ArchetypeState
 from simulation.orchestrator import _adapt_narrative
@@ -64,12 +65,14 @@ def _build_response_dict(
     answer: str,
     sampled_option: str,
     distribution: Dict[str, float],
+    *,
+    response_diagnostics: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Build a standard response dict from an agent dict."""
     persona = agent["persona"]
     pa = persona.personal_anchors
     meta = persona.meta
-    return {
+    payload = {
         "agent_id": persona.agent_id,
         "answer": answer,
         "sampled_option": sampled_option,
@@ -100,6 +103,9 @@ def _build_response_dict(
             "persona_cluster": meta.persona_cluster,
         },
     }
+    if response_diagnostics is not None:
+        payload["response_diagnostics"] = response_diagnostics
+    return payload
 
 
 # ------------------------------------------------------------------
@@ -117,6 +123,7 @@ async def _expand_archetype(
     question: str,
     question_id: str,
     rng: np.random.Generator,
+    diagnostics_enabled: bool = False,
 ) -> List[Dict[str, Any]]:
     """Expand archetype result to all member agents."""
     rep_dist = astate.last_distribution
@@ -133,8 +140,16 @@ async def _expand_archetype(
                 continue
             agent = agents[idx]
             if idx == astate.representative_idx:
+                rep_diag = None
+                if diagnostics_enabled:
+                    rep_contract = build_response_contract(
+                        scale_type="open_text",
+                        sampled_option=rep_sampled,
+                        distribution={},
+                    )
+                    rep_diag = {"source": "archetype_representative", **rep_contract.to_dict()}
                 results.append(_build_response_dict(
-                    agent, templates[0] if templates else "", rep_sampled, {},
+                    agent, templates[0] if templates else "", rep_sampled, {}, response_diagnostics=rep_diag,
                 ))
                 continue
             async def _llm_for_open_text(
@@ -146,7 +161,8 @@ async def _expand_archetype(
                         question=_question,
                         question_id=_qid,
                         friends_using=_agent.get("social_trait_fraction", 0.0),
-                        location_quality=_agent.get("location_quality", 0.5),
+                        location_quality=_agent.get("location_quality"),
+                        diagnostics_enabled=diagnostics_enabled,
                     )
             result = await _llm_for_open_text()
             result["agent_id"] = agent["persona"].agent_id
@@ -174,8 +190,17 @@ async def _expand_archetype(
         agent = agents[idx]
 
         if idx == astate.representative_idx:
+            rep_diag = None
+            if diagnostics_enabled:
+                rep_contract = build_response_contract(
+                    scale_type="likert",
+                    sampled_option=rep_sampled,
+                    distribution=rep_dist,
+                    ordered_options=list(rep_dist.keys()),
+                )
+                rep_diag = {"source": "archetype_representative", **rep_contract.to_dict()}
             results.append(_build_response_dict(
-                agent, templates[0], rep_sampled, rep_dist,
+                agent, templates[0], rep_sampled, rep_dist, response_diagnostics=rep_diag,
             ))
             continue
 
@@ -200,7 +225,8 @@ async def _expand_archetype(
                         question=_question,
                         question_id=_qid,
                         friends_using=_agent.get("social_trait_fraction", 0.0),
-                        location_quality=_agent.get("location_quality", 0.5),
+                        location_quality=_agent.get("location_quality"),
+                        diagnostics_enabled=diagnostics_enabled,
                     )
                 return result
 
@@ -213,8 +239,20 @@ async def _expand_archetype(
                 )
             else:
                 adapted = sampled
+            response_diagnostics = None
+            if diagnostics_enabled:
+                contract = build_response_contract(
+                    scale_type="likert" if perturbed else "open_text",
+                    sampled_option=sampled,
+                    distribution=perturbed,
+                    ordered_options=list(perturbed.keys()),
+                )
+                response_diagnostics = {
+                    "source": "archetype_template_adapted",
+                    **contract.to_dict(),
+                }
             results.append(_build_response_dict(
-                agent, adapted, sampled, perturbed,
+                agent, adapted, sampled, perturbed, response_diagnostics=response_diagnostics,
             ))
 
     # Run LLM tasks concurrently
@@ -277,6 +315,7 @@ async def run_archetype_round(
     narrative_budget: float = 0.20,
     seed: Optional[int] = None,
     narrative_templates_per_archetype: int = 3,
+    diagnostics_enabled: bool = False,
 ) -> List[Dict[str, Any]]:
     """Run one survey round using archetype execution + result expansion.
 
@@ -318,7 +357,8 @@ async def run_archetype_round(
                     question=_question,
                     question_id=_qid,
                     friends_using=_agent.get("social_trait_fraction", 0.0),
-                    location_quality=_agent.get("location_quality", 0.5),
+                    location_quality=_agent.get("location_quality"),
+                    diagnostics_enabled=diagnostics_enabled,
                 )
 
         rep_tasks[cid] = _run_rep
@@ -365,8 +405,9 @@ async def run_archetype_round(
                             question=_question,
                             question_id=_qid,
                             friends_using=_agent.get("social_trait_fraction", 0.0),
-                            location_quality=_agent.get("location_quality", 0.5),
+                            location_quality=_agent.get("location_quality"),
                             tone_override=_tone,
+                            diagnostics_enabled=diagnostics_enabled,
                         )
                 variant_tasks.append(_variant())
                 variant_cids.append(cid)
@@ -395,6 +436,7 @@ async def run_archetype_round(
                 question=question,
                 question_id=question_id,
                 rng=rng,
+                diagnostics_enabled=diagnostics_enabled,
             )
         )
 
@@ -434,8 +476,9 @@ def _default_think_fn(
             _env_cache[p.agent_id] = e
 
     async def _think(
-        persona, question, question_id, friends_using=0.0, location_quality=0.5,
+        persona, question, question_id, friends_using=0.0, location_quality=None,
         tone_override=None,
+        diagnostics_enabled: bool = False,
     ):
         from agents.cognitive import AgentCognitiveEngine
         from agents.state import AgentState
@@ -451,11 +494,16 @@ def _default_think_fn(
 
         _tone = tone_override
 
-        async def _reasoner(p, q, sa, dist, mems):
+        async def _reasoner(
+            p, q, sa, dist, mems, response_contract=None, turn_understanding=None, diagnostics_enabled: bool = False
+        ):
             return await reasoner_via_llm(
                 p, q, sa, dist, mems, used_openings=used_openings,
                 tone_override=_tone,
                 option_labels=option_labels,
+                response_contract=response_contract,
+                turn_understanding=turn_understanding,
+                diagnostics_enabled=diagnostics_enabled,
             )
 
         engine = AgentCognitiveEngine(
@@ -465,7 +513,14 @@ def _default_think_fn(
         agent_env = _env_cache.get(persona.agent_id)
         if agent_env:
             engine.set_world_environment(agent_env)
-        result = await engine.think(question, question_id, friends_using, location_quality)
+        result = await engine.think(
+            question,
+            question_id,
+            friends_using,
+            location_quality,
+            diagnostics_enabled=diagnostics_enabled,
+            option_labels=option_labels,
+        )
         store.add_memory(
             persona.agent_id,
             f"Q: {question} | A: {result.get('sampled_option', '')}",

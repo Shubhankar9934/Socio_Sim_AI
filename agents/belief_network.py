@@ -170,6 +170,41 @@ class BeliefNetwork:
         return float(_clamp(sigmoid))
 
 
+_BELIEF_LANGUAGE = {
+    "technology_optimism": ("technology makes life better", "technology complicates things"),
+    "brand_loyalty": ("trusted brands are worth paying more for", "brands don't matter much"),
+    "environmental_concern": ("environmental issues matter a lot", "environmental issues are overblown"),
+    "health_priority": ("health comes first in decisions", "health isn't a top priority"),
+    "government_trust": ("the government generally does the right thing", "the government can't be trusted"),
+    "price_consciousness": ("price matters more than anything", "price isn't the main concern"),
+    "innovation_curiosity": ("new things are exciting to try", "sticking with what works is better"),
+}
+
+
+def surface_top_beliefs(beliefs: "BeliefNetwork", top_n: int = 3) -> List[str]:
+    """Return natural language statements for the agent's strongest beliefs.
+
+    Beliefs far from 0.5 (strong conviction either way) are surfaced.
+    """
+    scores = []
+    for dim in BELIEF_DIMENSIONS:
+        val = getattr(beliefs, dim, 0.5)
+        distance = abs(val - 0.5)
+        scores.append((distance, dim, val))
+    scores.sort(key=lambda x: x[0], reverse=True)
+
+    statements = []
+    for _, dim, val in scores[:top_n]:
+        positive_text, negative_text = _BELIEF_LANGUAGE.get(dim, (dim, f"not {dim}"))
+        if val >= 0.65:
+            strength = "strongly" if val >= 0.80 else ""
+            statements.append(f"You {strength} believe that {positive_text}".replace("  ", " ").strip())
+        elif val <= 0.35:
+            strength = "strongly" if val <= 0.20 else ""
+            statements.append(f"You {strength} believe that {negative_text}".replace("  ", " ").strip())
+    return statements
+
+
 def init_beliefs_from_persona(
     persona: "Persona",
     traits: "PersonalityTraits",

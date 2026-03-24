@@ -1,0 +1,52 @@
+{
+  "population_realism": {
+    "population_realism_score": 0.91,
+    "passed": true,
+    "threshold": 0.85,
+    "per_attribute": {}
+  },
+  "drift": {
+    "drifted_agent_ids": [],
+    "count": 0,
+    "rate": 0.0,
+    "threshold": 0.3,
+    "per_agent_magnitude": {},
+    "auto_reset_count": 0
+  },
+  "consistency_score": 1.0,
+  "consistency_valid": false,
+  "distribution_validation": {
+    "observed_distribution": { "3-4 per week": 0.4, "daily": 0.35, "rarely": 0.25 },
+    "js_divergence": 0.08,
+    "js_similarity": 0.92,
+    "passed": true,
+    "n_responses": 100,
+    "question_model_key": "food_delivery_frequency"
+  },
+  "narrative_similarity": {
+    "duplicate_rate": 0.02,
+    "duplicate_pairs": 10,
+    "total_pairs": 4950,
+    "mean_similarity": 0.15,
+    "max_similarity": 0.89
+  },
+  "llm_judge": null,
+  "dashboard": {
+    "duplicate_narrative_rate": 0.02,
+    "persona_realism_score": 0.91,
+    "distribution_similarity": 0.92,
+    "consistency_score": 1.0,
+    "drift_rate": 0.0,
+    "mean_judge_score": 0.0
+  },
+  "quantitative_metrics": {},
+  "summary": {
+    "realism_passed": true,
+    "realism_score": 0.91,
+    "drift_count": 0,
+    "drift_rate": 0.0,
+    "distribution_passed": true,
+    "duplicate_narrative_rate": 0.02,
+    "all_targets_passed": true
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "question": "How satisfied are you with public transport in your area?",
+  "question_id": "q_transport_sat",
+  "use_archetypes": false,
+  "diagnostics": true,
+  "options": null,
+  "current_events": null
+}

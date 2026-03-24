@@ -1,5 +1,7 @@
 """Evaluation run and report."""
 
+import json
+from pathlib import Path
 from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException
@@ -31,6 +33,8 @@ async def evaluate_survey(survey_id: str, body: EvaluateRequest) -> EvaluationRe
         judge_sample=body.judge_sample,
         run_similarity=body.run_similarity,
         similarity_threshold=body.similarity_threshold,
+        reference_distribution=body.reference_distribution,
+        question_model_key=body.question_model_key,
     )
 
     first_persona = personas[0] if personas else None
@@ -56,6 +60,7 @@ async def evaluate_survey(survey_id: str, body: EvaluateRequest) -> EvaluationRe
         population_realism=report["population_realism"],
         drift=report["drift"],
         consistency_score=report.get("consistency_score", 1.0),
+        consistency_valid=report.get("consistency_valid", False),
         distribution_validation=report.get("distribution_validation"),
         narrative_similarity=report.get("narrative_similarity"),
         llm_judge=report.get("llm_judge"),
@@ -67,7 +72,8 @@ async def evaluate_survey(survey_id: str, body: EvaluateRequest) -> EvaluationRe
 
 @router.get("/{evaluation_id}/report")
 def get_evaluation_report(evaluation_id: str) -> Dict[str, Any]:
-    """Placeholder: return last evaluation by survey id if stored."""
-    if evaluation_id in survey_results:
-        return {"survey_id": evaluation_id, "message": "Run POST /evaluate/{survey_id} to get report."}
-    raise HTTPException(status_code=404, detail="Not found")
+    """Load exported evaluation report JSON for a survey id."""
+    report_path = Path(f"evaluation_report_{evaluation_id}.json")
+    if not report_path.exists():
+        raise HTTPException(status_code=404, detail="Evaluation report not found")
+    return json.loads(report_path.read_text(encoding="utf-8"))

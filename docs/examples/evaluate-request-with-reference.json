@@ -1,0 +1,16 @@
+{
+  "run_judge": false,
+  "judge_sample": 20,
+  "realism_threshold": 0.85,
+  "drift_threshold": 0.3,
+  "run_similarity": true,
+  "similarity_threshold": 0.9,
+  "reference_distribution": {
+    "rarely": 0.08,
+    "1-2 per week": 0.2,
+    "3-4 per week": 0.32,
+    "daily": 0.25,
+    "multiple per day": 0.15
+  },
+  "question_model_key": null
+}

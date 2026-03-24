@@ -2,7 +2,7 @@
 
 Gradient-free calibration to match simulated survey distributions to real-world data: factor weight optimization (differential evolution), real data loading, parameter space, optimizer, eval-feedback composite loss, and end-to-end pipeline.
 
-**API**: See [API module](api.md) for routes: `POST /calibration/auto-weights`, `POST /calibration/fit`, `POST /calibration/upload-data`.
+**API**: See [API module](api.md) for routes: `POST /calibration/auto-weights`, `POST /calibration/fit`, `POST /calibration/upload-data`. Successful `/fit` and `/auto-weights` calls **persist** learned factor weights in-process via [`config/calibrated_weights.py`](../../config/calibrated_weights.py); [`config/question_models.py`](../../config/question_models.py) applies them when resolving question models for decisions.
 
 ---
 

@@ -1,0 +1,6 @@
+{
+  "question": "How often do you order food delivery?",
+  "question_id": "q_delivery",
+  "use_archetypes": false,
+  "diagnostics": false
+}

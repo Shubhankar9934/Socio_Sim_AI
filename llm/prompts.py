@@ -11,6 +11,8 @@ from agents.narrative import (
     NarrativeStyleProfile,
     build_style_instruction,
     contains_duration_anti_pattern,
+    format_avoid_phrases_line,
+    format_voice_instruction_line,
     is_banned_pattern,
     pick_length_from_profile,
     pick_narrative_style,
@@ -26,14 +28,28 @@ from agents.narrative import (
     vague_answer_probability_for_profile,
 )
 from agents.realism import (
+    _fragment_looks_dangling,
     degrade_polish,
+    inject_thinking_markers,
     maybe_add_hedging,
+    maybe_add_micro_contradiction,
+    maybe_add_redundancy,
     maybe_fragmentize,
     pick_vague_answer,
     should_use_vague_answer,
+    trim_weak_terminal_suffix,
     validate_demographic_plausibility,
 )
 from population.personas import Persona
+from core.rng import ensure_py_rng
+from agents.response_contract import compute_confidence_band, tone_for_confidence_band
+from agents.intent_router import build_turn_understanding_rules
+from agents.context_relevance import (
+    build_relevance_from_turn_understanding,
+    filter_memories_for_topic,
+    sample_response_shape,
+)
+from config.settings import get_settings as _get_settings
 
 
 # ---------------------------------------------------------------------------
@@ -59,10 +75,59 @@ def _load_system_prompts() -> List[str]:
 
 _SYSTEM_PROMPTS: List[str] = _load_system_prompts()
 
+_SYSTEM_PROMPT_CASUAL_FILLER_MARKERS = (
+    "say 'like'",
+    "say \"like\"",
+    "you know naturally",
+    "think out loud. say",
+    "'like', 'i mean', 'you know'",
+)
 
-def _pick_system_prompt(rng: Optional[random.Random] = None) -> str:
+
+def _system_prompt_mandates_casual_fillers(prompt: str) -> bool:
+    t = (prompt or "").lower()
+    return any(m in t for m in _SYSTEM_PROMPT_CASUAL_FILLER_MARKERS)
+
+
+# Short register-specific tags appended to the base system prompt for lexical diversity.
+_VOICE_REGISTER_FRAGMENTS: Dict[str, List[str]] = {
+    "analytical": [
+        "Prefer clear, economical wording; skip stock filler phrases.",
+        "Answer like someone who thinks before speaking — no performative hedging.",
+    ],
+    "conversational": [
+        "Sound like a normal chat — relaxed, but still answer the question.",
+        "Keep it human and informal without rambling.",
+    ],
+    "blunt": [
+        "Be brief and plain-spoken; do not pad with disclaimers.",
+        "Get to the point; avoid 'honestly / I mean / kind of' openers.",
+    ],
+    "rambling": [
+        "You may take a slightly winding path as long as you still answer clearly.",
+        "Natural spoken rhythm is fine; don't sound like a template.",
+    ],
+}
+
+
+def _pick_system_prompt(
+    rng: Optional[random.Random] = None,
+    voice_register: str = "conversational",
+    *,
+    strict_demographic_voice: bool = False,
+) -> str:
     r = rng or random
-    return r.choice(_SYSTEM_PROMPTS)
+    pool: List[str] = list(_SYSTEM_PROMPTS)
+    if strict_demographic_voice and pool:
+        filtered = [p for p in pool if not _system_prompt_mandates_casual_fillers(p)]
+        if filtered:
+            pool = filtered
+    base = r.choice(pool)
+    reg = (voice_register or "conversational").strip() or "conversational"
+    frags = _VOICE_REGISTER_FRAGMENTS.get(reg) or _VOICE_REGISTER_FRAGMENTS["conversational"]
+    if frags and r.random() < 0.88:
+        base = f"{base} {r.choice(frags)}"
+    return base
 
 
 # ---------------------------------------------------------------------------
@@ -198,51 +263,37 @@ _FREQUENCY_INTERPRETATION: Dict[str, str] = _load_frequency_interpretation()
 
 _INSTRUCTION_VARIANTS: List[str] = [
     (
-        "Answer as this person in 1-3 sentences.\n"
-        "Use at least one personal detail (hobby, cuisine, schedule, diet, etc.) in the explanation.\n"
-        "Avoid generic phrases like \"I prefer to cook at home for my family.\" Use a specific personal context instead.\n"
-        "Your probability distribution strongly favors \"{top_option}\" ({top_prob_pct}). "
-        "You selected \"{sampled_option}\" ({sampled_prob_pct}). "
-        "Your narrative MUST describe \"{sampled_option}\" frequency — that means {interpretation}.\n"
-        "Do NOT describe \"{top_option}\" ordering patterns if it differs from your selection.\n"
-        "Reply with only the answer, no meta-commentary."
+        "Talk about this like you'd tell a friend. Don't organize your thoughts -- just say what comes to mind.\n"
+        "You selected \"{sampled_option}\" ({sampled_prob_pct}) — that means {interpretation}.\n"
+        "Start with some context from your life, then work your way to the answer. Repeat yourself if that's natural.\n"
+        "It's fine to trail off or change direction mid-sentence."
     ),
     (
-        "Respond in 1-3 sentences as this exact person.\n"
-        "Mention something specific about your life — a food, a place, a habit.\n"
-        "Your distribution top choice is \"{top_option}\" ({top_prob_pct}), but "
-        "your selected answer is \"{sampled_option}\" ({sampled_prob_pct}). "
-        "{interpretation}. Make sure your narrative matches that frequency — don't contradict it.\n"
-        "Just give the answer, nothing else."
+        "Say what comes to mind first. Don't plan your answer.\n"
+        "Your answer is \"{sampled_option}\" ({sampled_prob_pct}) — {interpretation}.\n"
+        "Mention something real from your day or your routine. Be messy, be you."
     ),
     (
-        "Give a 1-3 sentence answer that sounds like something this person would actually say.\n"
-        "Include a concrete detail from your daily routine.\n"
+        "Answer like you're voice-noting a friend about this.\n"
         "You chose \"{sampled_option}\" ({sampled_prob_pct}) — meaning {interpretation}. Stick to that.\n"
-        "The distribution favors \"{top_option}\" ({top_prob_pct}) — do NOT describe that frequency unless it matches your selection.\n"
-        "No preamble, no commentary, just the answer."
+        "Include a real detail from your life. It's OK to be imperfect."
     ),
     (
-        "Write 1-3 sentences as this person.\n"
-        "Ground your answer in a real detail — your commute, your kitchen, your schedule.\n"
-        "\"{sampled_option}\" ({sampled_prob_pct}) is your answer — {interpretation}. "
-        "Everything you say must align with that frequency.\n"
-        "Do NOT describe \"{top_option}\" frequency if it differs from \"{sampled_option}\".\n"
-        "Output only the answer."
+        "Think out loud. Start with a feeling or situation, then get to your point.\n"
+        "\"{sampled_option}\" ({sampled_prob_pct}) is your answer — {interpretation}.\n"
+        "Don't try to sound balanced or smart. Just talk."
     ),
 ]
 
 _MICRO_INSTRUCTION_VARIANTS: List[str] = [
     (
-        "Give the shortest possible answer — a few words at most.\n"
+        "Super short answer — like texting.\n"
         "Your answer is \"{sampled_option}\" ({sampled_prob_pct}) — {interpretation}. "
-        "Just say it briefly, the way you'd text a friend.\n"
-        "Output only the answer."
+        "Just say it quick."
     ),
     (
-        "Answer in under 5 words. No explanation needed.\n"
-        "You chose \"{sampled_option}\" ({sampled_prob_pct}). Say it your way — super brief.\n"
-        "Output only the answer."
+        "Under 5 words. No need to explain.\n"
+        "You chose \"{sampled_option}\" ({sampled_prob_pct}). Say it your way."
     ),
 ]
 
@@ -457,6 +508,58 @@ def _text_expresses_stance(text: str, stance_cat: str) -> bool:
     return True  # neutral or unknown: allow
 
 
+def _income_suggests_budget_pressure(income: Any) -> bool:
+    s = str(income or "").strip().lower()
+    if not s:
+        return False
+    if s.startswith("<"):
+        return True
+    if "<10k" in s or "under 10" in s or "below 10" in s:
+        return True
+    if re.search(r"\b9\s*k\b", s):
+        return True
+    return False
+
+
+def _strict_demographic_voice_cohort(persona: Persona, rhetorical_habit: str) -> bool:
+    habit = (rhetorical_habit or "direct").strip().lower()
+    if habit in {"rambling", "storytelling", "verbose", "narrative", "emotional_lead"}:
+        return False
+    age_s = str(getattr(persona, "age", "") or "")
+    m = re.search(r"\b(\d{2})\b", age_s)
+    if m and int(m.group(1)) >= 50:
+        return True
+    if _income_suggests_budget_pressure(getattr(persona, "income", None)):
+        return True
+    return False
+
+
+def _demographic_voice_instructions(persona: Persona, rhetorical_habit: str) -> str:
+    """Tighten filler and framing from age/income without overriding explicit rambling styles."""
+    habit = (rhetorical_habit or "direct").strip().lower()
+    loose = habit in {"rambling", "storytelling", "verbose", "narrative", "emotional_lead"}
+    parts: List[str] = []
+    age_s = str(getattr(persona, "age", "") or "")
+    m = re.search(r"\b(\d{2})\b", age_s)
+    age_floor = int(m.group(1)) if m else 0
+    if age_floor >= 50 and not loose:
+        parts.append(
+            "Speak with measured practicality. Do NOT start sentences with: Well, / Yep, / Yeah, / "
+            'Honestly, / Like, (filler) / You know,. '
+            'Strictly avoid discourse fillers as openers or crutches: "honestly", "I mean", '
+            '"you know", and "like" (filler, not "I like food").'
+        )
+    inc = str(getattr(persona, "income", "") or "").strip()
+    if _income_suggests_budget_pressure(inc):
+        parts.append(
+            "Your household is budget-constrained: focus on costs and tradeoffs; keep sentences short "
+            "and direct. Avoid luxury or hobby-upscale framing unless it clearly fits."
+        )
+    if not parts:
+        return ""
+    return "\nVOICE (demographics):\n" + " ".join(parts)
+
+
 def _persona_context(persona: Persona) -> dict:
     """Build a dict of persona fields for template filling."""
     pa = persona.personal_anchors
@@ -488,42 +591,62 @@ def build_agent_prompt(
     tone_override: Optional[str] = None,
     simulation_context: Optional[Dict[str, Any]] = None,
     option_labels: Optional[List[str]] = None,
+    response_contract: Optional[Dict[str, Any]] = None,
+    turn_understanding: Optional[Dict[str, Any]] = None,
 ) -> str:
-    r = rng or random.Random()
+    r = ensure_py_rng(rng, key=f"prompt:{persona.agent_id}:{question}:{sampled_option}")
     pa = persona.personal_anchors
     options = list(distribution.keys())
-    scale_type = infer_scale_type(options)
+    scale_type = str((turn_understanding or {}).get("scale_type") or infer_scale_type(options))
+    contract_mode = (response_contract or {}).get("expression_mode", "")
+    if contract_mode == "open_expression":
+        scale_type = "open_text"
     # For empty options (open-ended), check if it's a duration question
-    if not options and _is_duration_question(question):
+    if not options and scale_type == "open_text" and _is_duration_question(question):
         scale_type = "duration"
-    allow_anchors = allow_persona_anchor(question)
+    eff_understanding = turn_understanding or build_turn_understanding_rules(question)
+    imode_for_rel = str(
+        (response_contract or {}).get("interaction_mode")
+        or eff_understanding.get("interaction_mode")
+        or "survey"
+    )
+    rel_policy = build_relevance_from_turn_understanding(
+        question, eff_understanding, interaction_mode=imode_for_rel
+    )
+    allow_anchors = rel_policy.include_lifestyle_anchors
 
     try:
         from config.domain import get_domain_config
         _currency = get_domain_config().currency
     except Exception:
         _currency = "USD"
-    persona_block = (
-        f"Age group: {persona.age}. Nationality: {persona.nationality}. Location: {persona.location}.\n"
-        f"Income band: {_currency} {persona.income}/month. Occupation: {persona.occupation}. "
-        f"Household size: {persona.household_size}."
-    )
-    if persona.family.spouse:
+    persona_block = ""
+    if rel_policy.include_core_demographics:
+        persona_block = (
+            f"Age group: {persona.age}. Nationality: {persona.nationality}. Location: {persona.location}.\n"
+            f"Income band: {_currency} {persona.income}/month. Occupation: {persona.occupation}. "
+            f"Household size: {persona.household_size}."
+        )
+    if rel_policy.include_family and persona.family.spouse:
         persona_block += f" Spouse: yes, children: {persona.family.children}."
-    persona_block += f"\nCar: {'yes' if persona.mobility.car else 'no'}, metro: {persona.mobility.metro_usage}."
+    if rel_policy.include_mobility:
+        persona_block += f"\nCar: {'yes' if persona.mobility.car else 'no'}, metro: {persona.mobility.metro_usage}."
 
-    # Append lifestyle fields only when question topic warrants
-    if allow_anchors:
+    if rel_policy.include_biography and getattr(persona, "life_path", None) and persona.life_path.biography:
+        persona_block += f"\nBackground: {persona.life_path.biography}"
+
+    # Append lifestyle fields only when relevance policy allows
+    if rel_policy.include_lifestyle_anchors:
         persona_block += (
             f"\nCuisine preference: {pa.cuisine_preference}. Diet: {pa.diet}. Hobby: {pa.hobby}.\n"
             f"Work schedule: {pa.work_schedule}. Dinner time: {pa.typical_dinner_time}. "
             f"Commute: {pa.commute_method}. Health focus: {pa.health_focus}."
         )
 
-    # Archetype and cultural hints only for lifestyle-related questions
+    # Archetype and cultural hints only when lifestyle tier is active
     archetype_block = ""
     cultural_block = ""
-    if allow_anchors:
+    if rel_policy.include_archetype_cultural:
         archetype = pa.archetype if hasattr(pa, "archetype") else "default"
         archetype_hint = ARCHETYPE_HINTS.get(archetype, "")
         if archetype_hint:
@@ -532,18 +655,23 @@ def build_agent_prompt(
         if cultural_hint:
             cultural_block = f"\nCULTURAL CONTEXT:\n{cultural_hint}\n"
 
-    behavior_desc = (
-        f"convenience={persona.lifestyle.convenience_preference:.2f}, "
-        f"service_pref={persona.lifestyle.primary_service_preference:.2f}, "
-        f"price_sensitivity={persona.lifestyle.price_sensitivity:.2f}."
-    )
-    if scale_type not in ("open_text", "duration"):
-        behavior_desc += f" Sampled response: \"{sampled_option}\"."
+    if rel_policy.include_behavior_floats:
+        behavior_desc = (
+            f"convenience={persona.lifestyle.convenience_preference:.2f}, "
+            f"service_pref={persona.lifestyle.primary_service_preference:.2f}, "
+            f"price_sensitivity={persona.lifestyle.price_sensitivity:.2f}."
+        )
+        if scale_type not in ("open_text", "duration"):
+            behavior_desc += f" Sampled response: \"{sampled_option}\"."
+    else:
+        behavior_desc = "Behavior preference detail omitted for this question type."
 
+    _topic = str(eff_understanding.get("topic") or "")
+    memories_use = filter_memories_for_topic(memories, _topic, max_items=5)
     memory_block = (
         "No relevant memories."
-        if not memories
-        else "Relevant memories:\n" + "\n".join(f"- {m}" for m in memories[:5])
+        if not memories_use
+        else "Relevant memories:\n" + "\n".join(f"- {m}" for m in memories_use[:5])
     )
 
     ctx = _persona_context(persona)
@@ -556,20 +684,86 @@ def build_agent_prompt(
         preferred_style=ns.preferred_style,
         slang_level=ns.slang_level,
         grammar_quality=ns.grammar_quality,
+        voice_register=getattr(ns, "voice_register", "conversational") or "conversational",
+        rhetorical_habit=getattr(ns, "rhetorical_habit", "direct") or "direct",
+        avoid_phrases=tuple(getattr(ns, "avoid_phrases", []) or ()),
     )
     style = pick_style_from_profile(_profile, rng=rng)
     structure = pick_sentence_structure(rng=rng)
-    opening = pick_opening_deduplicated(ctx, used_openings=used_openings, rng=rng)
+    opening = pick_opening_deduplicated(
+        ctx,
+        used_openings=used_openings,
+        rng=rng,
+        profile=_profile,
+        income_band=getattr(persona, "income", None),
+    )
     anchor_name, anchor_value = pick_persona_anchor(ctx, rng=rng)
     length = pick_length_from_profile(_profile, rng=rng)
+
+    # Response compression curve: as turns increase, shift toward shorter answers
+    _turn_count = 0
+    _fatigue = 0.0
+    _emotional_state = "neutral"
+    _decision_latency = "normal"
+    if response_contract:
+        _turn_count = int(response_contract.get("_turn_count", 0) or 0)
+        _fatigue = float(response_contract.get("_fatigue", 0.0) or 0.0)
+        _emotional_state = str(response_contract.get("_emotional_state", "neutral") or "neutral")
+        _decision_latency = str(response_contract.get("decision_latency", "normal") or "normal")
+    _settings = _get_settings()
+    if getattr(_settings, "enable_compression_curve", True) and _turn_count > 2:
+        import math
+        verbosity_levels = ["long", "medium", "short", "micro"]
+        current_idx = verbosity_levels.index(length) if length in verbosity_levels else 1
+        compression = 1.0 - math.exp(-_turn_count / 6.0)
+        shift = int(compression * 2)
+        new_idx = min(len(verbosity_levels) - 1, current_idx + shift)
+        length = verbosity_levels[new_idx]
+    if _fatigue > 0.5:
+        if length == "long":
+            length = "medium"
+        elif length == "medium" and _fatigue > 0.7:
+            length = "short"
+
     tone = tone_override if tone_override else pick_tone_from_profile(_profile, rng=rng)
+    if _emotional_state == "annoyed" and not tone_override:
+        tone = r.choice(["terse", "blunt", "skeptical"])
+    elif _emotional_state == "enthusiastic" and not tone_override:
+        tone = r.choice(["casual", "emotional_practical"])
+    elif _emotional_state == "bored" and not tone_override:
+        tone = r.choice(["lazy", "distracted", "terse"])
+
+    # Decision latency modulates response style
+    if _decision_latency == "instant":
+        if length in ("long", "medium"):
+            length = "short"
+    elif _decision_latency == "deliberate":
+        if length == "micro":
+            length = "short"
+
+    qmk_for_shape = str(eff_understanding.get("question_model_key_candidate") or "")
+    if qmk_for_shape and r.random() < 0.72:
+        sampled_len = sample_response_shape(qmk_for_shape, imode_for_rel, r)
+        if sampled_len in ("micro", "short", "medium", "long"):
+            length = sampled_len
+
     include_anchor = allow_anchors and length != "micro" and r.random() < 0.55
     style_instruction = build_style_instruction(
         style, structure, opening, anchor_name, anchor_value,
         length=length, tone=tone, include_anchor=include_anchor,
+        voice_line=format_voice_instruction_line(_profile),
+        avoid_line=format_avoid_phrases_line(_profile),
     )
     if tone_override and scale_type not in ("open_text", "duration"):
         style_instruction += "\nTone affects wording only, not the answer content. Do not change the selected answer."
+
+    _demo_voice = _demographic_voice_instructions(persona, _profile.rhetorical_habit)
+    if _demo_voice:
+        style_instruction += _demo_voice
+    style_instruction += (
+        "\nVOICE LIMIT: Use at most one conversational hedge in your whole answer "
+        '(e.g. "I guess", "maybe", "kind of", "honestly", "I mean", "you know").'
+    )
 
     # Scale-type driven instruction selection
     interpretation = _FREQUENCY_INTERPRETATION.get(sampled_option, sampled_option)
@@ -577,6 +771,22 @@ def build_agent_prompt(
 
     if scale_type == "open_text":
         instruction = r.choice(_OPEN_TEXT_INSTRUCTION_VARIANTS)
+        if response_contract:
+            latent_stance = str(response_contract.get("latent_stance", "")).strip()
+            conf = str(response_contract.get("confidence_band", "")).strip()
+            if latent_stance:
+                instruction += (
+                    f"\nInternal stance anchor: {latent_stance}."
+                    " Express this naturally in words only."
+                    " Do NOT mention ratings, scales, or numeric scores."
+                )
+            if conf == "low":
+                instruction += (
+                    "\nUse mild uncertainty language since your confidence is low, "
+                    "but express it in at most one short phrase (consistent with the one-hedge cap)."
+                )
+            elif conf == "high":
+                instruction += "\nSpeak clearly and decisively, but still naturally."
     elif scale_type == "duration":
         instruction = r.choice(_DURATION_INSTRUCTION_VARIANTS)
     elif scale_type == "numeric":
@@ -613,6 +823,46 @@ def build_agent_prompt(
         variants = _CATEGORICAL_INSTRUCTION_VARIANTS
         instruction = r.choice(variants).format(sampled_option=sampled_option)
 
+    if response_contract:
+        belief_stmts = response_contract.get("belief_statements") or []
+        if rel_policy.include_beliefs and belief_stmts:
+            instruction += "\nYOUR BELIEFS:\n" + "\n".join(f"- {s}" for s in belief_stmts) + "\n"
+        psummary = str(response_contract.get("personality_summary", "")).strip()
+        if rel_policy.include_personality_summary and psummary:
+            instruction += f"\nPERSONALITY: {psummary}\n"
+        tradeoff = str(response_contract.get("tradeoff_guidance", "")).strip()
+        if rel_policy.include_tradeoff and tradeoff:
+            instruction += f"\n{tradeoff}\n"
+
+        interaction_mode = str(response_contract.get("interaction_mode", "")).strip()
+        dominant_factor = str(response_contract.get("dominant_factor", "")).strip()
+        runner_up = str(response_contract.get("runner_up_option", "")).strip()
+        narrative_guidance = str(response_contract.get("narrative_guidance", "")).strip()
+        if interaction_mode == "conversation":
+            instruction += (
+                "\nThis is regular conversation, not a scored survey turn."
+                " Answer naturally and briefly, like a real person."
+                " Do NOT invent options, ratings, or survey framing."
+            )
+        elif interaction_mode == "qualitative_interview":
+            instruction += (
+                "\nThis is a qualitative interview turn."
+                " Answer in first person with grounded details, routines, examples, or feelings when relevant."
+                " Do NOT invent ratings, scales, or option labels unless explicitly asked."
+            )
+        if rel_policy.include_dominant_factor and dominant_factor:
+            instruction += (
+                f"\nYour answer should sound like it is mainly driven by this factor: {dominant_factor}."
+                " Do not explain your answer as generic uncertainty if this factor is strong."
+            )
+        if rel_policy.include_runner_up and runner_up and runner_up != sampled_option:
+            instruction += (
+                f"\nThe closest alternative was \"{runner_up}\", but your final answer is still \"{sampled_option}\"."
+                " Mention tension only if confidence is low or medium."
+            )
+        if rel_policy.include_narrative_guidance and narrative_guidance:
+            instruction += f"\nNarrative stance hint: {narrative_guidance}"
+
     # Stance confidence -> HARD constraints + semantic alignment (plan: output_quality_refined)
     stance_confidence = 0.5
     if scale_type not in ("open_text", "duration") and distribution:
@@ -628,7 +878,10 @@ def build_agent_prompt(
                 "If your stance is strong, express it with conviction and emotion."
             )
         elif stance_confidence >= 0.4:
-            instruction += "\nYour decision is moderate; you may use cautious or hedging language."
+            instruction += (
+                "\nYour decision is moderate. You can slightly contradict yourself -- real people do. "
+                "Start with one thought, then partially walk it back or add a 'but' -- this is natural."
+            )
         else:
             instruction += "\nYour decision is uncertain; use tentative language."
 
@@ -656,7 +909,26 @@ def build_agent_prompt(
         elif stance_cat == "neutral":
             instruction += "\nYou may express uncertainty or mixed feelings."
 
-    # Global: anti-policy-analyst, min completeness, anti-overthinking, anti-expert
+    # Global: anti-perfection + anti-policy-analyst + context-first + emotion-logic
+    _anti_perfection = (
+        "\nYour answer should NOT sound like it was written by an AI. "
+        "Real people don't speak in perfect sentences. They trail off, repeat themselves, "
+        "mix feelings with facts, and sometimes slightly contradict themselves. Do that."
+    )
+    instruction += _anti_perfection
+
+    _bflags = _get_settings()
+    if getattr(_bflags, "enable_context_first_instruction", True) and scale_type not in ("open_text", "duration") and r.random() < 0.40:
+        instruction += (
+            "\nBefore giving your answer, briefly set the scene -- "
+            "mention what's happening in your life, your routine, or a recent experience. THEN give your opinion."
+        )
+    if getattr(_bflags, "enable_emotion_logic_mixing", True) and scale_type not in ("open_text", "duration") and r.random() < 0.30:
+        instruction += (
+            "\nStart with how this makes you FEEL, then explain why practically. "
+            "Example: 'Honestly it frustrates me because the prices keep going up and my salary hasn't changed.'"
+        )
+
     if scale_type not in ("open_text", "duration"):
         instruction += (
             "\nDo NOT try to sound balanced or politically neutral. Respond as a real person with a clear opinion. "
@@ -756,11 +1028,20 @@ INSTRUCTION:
 # Per-agent temperature jitter
 # ---------------------------------------------------------------------------
 
-def _agent_temperature(base_temp: float, rng: Optional[random.Random] = None) -> float:
-    """Add uniform jitter to the base LLM temperature so agents vary in creativity."""
+def _agent_temperature(
+    base_temp: float,
+    rng: Optional[random.Random] = None,
+    personality: Optional[Any] = None,
+) -> float:
+    """Add uniform jitter plus openness/conscientiousness tilt (clamped)."""
     r = rng or random
     jitter = (r.random() - 0.5) * 0.30  # +/- 0.15
-    return max(0.3, min(1.5, base_temp + jitter))
+    trait_adj = 0.0
+    if personality is not None:
+        o = float(getattr(personality, "openness_to_experience", 0.5) or 0.5)
+        c = float(getattr(personality, "conscientiousness", 0.5) or 0.5)
+        trait_adj = (o - 0.5) * 0.38 - (c - 0.5) * 0.18
+    return max(0.3, min(1.5, base_temp + jitter + trait_adj))
 
 
 # ---------------------------------------------------------------------------
@@ -781,6 +1062,31 @@ def _build_judge_system() -> str:
 
 
 JUDGE_SYSTEM = _build_judge_system()
+
+
+def _deterministic_alignment_repair(
+    sampled_option: str,
+    scale: List[str],
+    option_label_map: Optional[Dict[str, str]] = None,
+) -> str:
+    """Build a deterministic fallback sentence anchored to sampled option."""
+    if not scale:
+        return "It depends on the situation for me."
+
+    scale_type = infer_scale_type(scale)
+    label_map = option_label_map or {}
+    if scale_type == "frequency":
+        return f"I would say {sampled_option}; that best matches my routine."
+    if scale_type == "numeric":
+        mapped = label_map.get(sampled_option)
+        if mapped:
+            return f"My stance is {mapped}, and that is what I mean here."
+        return f"I would choose {sampled_option} on this scale."
+    if scale_type == "likert":
+        return f"My answer is {sampled_option}, and that reflects my actual view."
+    if scale_type == "categorical":
+        return f"I choose {sampled_option} because it fits my situation best."
+    return f"My answer is {sampled_option}."
 
 
 def build_judge_prompt(
@@ -865,7 +1171,10 @@ async def reasoner_via_llm(
     tone_override: Optional[str] = None,
     simulation_context: Optional[Dict[str, Any]] = None,
     option_labels: Optional[List[str]] = None,
-) -> str:
+    response_contract: Optional[Dict[str, Any]] = None,
+    turn_understanding: Optional[Dict[str, Any]] = None,
+    diagnostics_enabled: bool = False,
+) -> Any:
     """Async reasoner with vague-answer bypass, retry on banned patterns,
     narrative-option mismatch, and post-hoc hedging injection.
 
@@ -880,7 +1189,10 @@ async def reasoner_via_llm(
     from llm.client import get_llm_client
 
     settings = get_settings()
-    rng = random.Random()
+    rng = ensure_py_rng(
+        None,
+        key=f"reasoner:{persona.agent_id}:{question}:{sampled_answer}",
+    )
 
     # Gate: vague/terse answer bypass — probability varies by agent's style profile
     ns = persona.personal_anchors.narrative_style
@@ -890,22 +1202,65 @@ async def reasoner_via_llm(
         preferred_style=ns.preferred_style,
         slang_level=ns.slang_level,
         grammar_quality=ns.grammar_quality,
+        voice_register=getattr(ns, "voice_register", "conversational") or "conversational",
+        rhetorical_habit=getattr(ns, "rhetorical_habit", "direct") or "direct",
+        avoid_phrases=tuple(getattr(ns, "avoid_phrases", []) or ()),
     )
     # Skip vague-answer bypass for open_text (no predefined option)
     is_open_text = not distribution
     _min_vague_words = 5
+    stance_confidence_early = float(distribution.get(sampled_answer, 0.5)) if distribution else 0.5
+    _fatigue_v = float((response_contract or {}).get("_fatigue", 0.0) or 0.0)
+    try:
+        from agents.behavior_controller import BehaviorController as _BCV
+
+        _vbudget = _BCV.compute_budget(
+            fatigue=_fatigue_v,
+            confidence_band=compute_confidence_band(stance_confidence_early),
+            grammar_quality=getattr(_profile, "grammar_quality", 0.5) if _profile else 0.5,
+            settings=settings,
+        )
+    except ImportError:
+        _vbudget = None
+    alignment_meta: Dict[str, Any] = {
+        "heuristic_consistent": None,
+        "judge_consistent": None,
+        "repaired": False,
+        "hard_block_applied": False,
+        "final_consistent": None,
+    }
     if not is_open_text:
-        vague_prob = vague_answer_probability_for_profile(_profile)
+        base_vp = vague_answer_probability_for_profile(_profile)
+        vague_prob = (
+            0.5 * base_vp + 0.5 * float(_vbudget.vague_prob)
+            if _vbudget is not None
+            else base_vp
+        )
+        vague_prob = max(0.0, min(1.0, float(vague_prob)))
         if rng.random() < vague_prob:
             for _ in range(3):  # try up to 3 draws for a long enough vague answer
                 vague = pick_vague_answer(sampled_answer, rng)
                 if vague and len(vague.split()) >= _min_vague_words:
+                    if diagnostics_enabled:
+                        return {"answer": vague, "alignment": alignment_meta}
                     return vague
             # no long enough vague answer: fall through to LLM
 
     client = get_llm_client()
-    system_prompt = _pick_system_prompt(rng)
-    temperature = _agent_temperature(settings.llm_temperature, rng)
+    _strict_voice = _strict_demographic_voice_cohort(persona, _profile.rhetorical_habit)
+    system_prompt = _pick_system_prompt(
+        rng,
+        voice_register=_profile.voice_register,
+        strict_demographic_voice=_strict_voice,
+    )
+    system_prompt += (
+        " Hard rule: use at most one conversational hedge in your answer "
+        '(e.g. "honestly", "I mean", "you know", "like" as filler); keep wording tight '
+        "because light editing may run after you answer."
+    )
+    temperature = _agent_temperature(
+        settings.llm_temperature, rng, personality=persona.personality,
+    )
     scale = list(distribution.keys())
     numeric_label_map = _resolve_numeric_label_map(option_labels, scale, question)
 
@@ -913,15 +1268,40 @@ async def reasoner_via_llm(
     stance_confidence = float(distribution.get(sampled_answer, 0.5)) if distribution else 0.5
     option_for_stance = numeric_label_map.get(sampled_answer) or sampled_answer
     stance_cat = _stance_category(option_for_stance)
+    dynamic_tone_override = tone_override
+    if dynamic_tone_override is None:
+        contract_tone: Optional[str] = None
+        if response_contract and response_contract.get("tone_selected"):
+            contract_tone = str(response_contract.get("tone_selected") or "").strip()
+        has_tradeoff = bool(
+            response_contract and str(response_contract.get("tradeoff_guidance", "") or "").strip()
+        )
+        if contract_tone:
+            if has_tradeoff and rng.random() < 0.62:
+                dynamic_tone_override = contract_tone
+            elif rng.random() < 0.5:
+                dynamic_tone_override = contract_tone
+            else:
+                dynamic_tone_override = None
+        else:
+            cband = compute_confidence_band(stance_confidence)
+            dynamic_tone_override = tone_for_confidence_band(cband, rng=rng)
+
+    # Fatigue for behavior budget (mirrors build_agent_prompt; must exist in this scope)
+    _fatigue = 0.0
+    if response_contract:
+        _fatigue = float(response_contract.get("_fatigue", 0.0) or 0.0)
 
     for attempt in range(_MAX_RETRIES + 1):
         prompt = build_agent_prompt(
             persona, question, sampled_answer, distribution, memories,
             rng=rng, consistency_warning=consistency_warning,
             used_openings=used_openings,
-            tone_override=tone_override,
+            tone_override=dynamic_tone_override,
             simulation_context=simulation_context,
             option_labels=option_labels,
+            response_contract=response_contract,
+            turn_understanding=turn_understanding,
         )
         messages = [
             {"role": "system", "content": system_prompt},
@@ -930,7 +1310,7 @@ async def reasoner_via_llm(
         result = await client.chat(
             messages,
             temperature=temperature,
-            max_tokens=256,
+            max_tokens=int(getattr(settings, "llm_reasoner_max_tokens", 288)),
         )
 
         # Min-length guard: reject very short LLM output (orphaned filler)
@@ -958,6 +1338,7 @@ async def reasoner_via_llm(
                 result, sampled_answer, scale,
                 option_label_map=numeric_label_map,
             )
+            alignment_meta["heuristic_consistent"] = bool(consistent)
             if not consistent and attempt < _MAX_RETRIES:
                 label_hint = ""
                 if sampled_answer in numeric_label_map:
@@ -976,6 +1357,7 @@ async def reasoner_via_llm(
                 judge_ok = await _judge_narrative_consistency(
                     result, sampled_answer, client,
                 )
+                alignment_meta["judge_consistent"] = bool(judge_ok)
                 if not judge_ok:
                     consistency_warning = (
                         f"A consistency check found your answer does not clearly "
@@ -984,8 +1366,8 @@ async def reasoner_via_llm(
                     )
                     continue
 
-            # Hard post-generation filter: strong stance must not contain hedging/contradiction
-            if stance_confidence >= 0.6 and _violates_strong_stance(result) and attempt < _MAX_RETRIES:
+            # Hard post-generation filter: only very strong stances block hedging
+            if stance_confidence >= 0.80 and _violates_strong_stance(result) and attempt < _MAX_RETRIES:
                 consistency_warning = (
                     "Your answer contradicted a strong stance. Do NOT use 'but', 'however', "
                     "'on one hand', 'on the other hand', or 'depends'. State a single-sided opinion only."
@@ -1001,10 +1383,101 @@ async def reasoner_via_llm(
                     )
                     continue
 
-        # Post-hoc hedging for human texture
-        result = maybe_add_hedging(result, rng)
-        result = maybe_fragmentize(result, _profile, rng)
-        result = degrade_polish(result, rng)
+        # Post-hoc processing chain for human texture (feature-flag aware)
+        _pp_settings = _get_settings()
+        _pp_log: List[str] = []
+
+        try:
+            from agents.behavior_controller import BehaviorController
+            _budget = BehaviorController.compute_budget(
+                fatigue=_fatigue,
+                confidence_band=compute_confidence_band(stance_confidence),
+                grammar_quality=getattr(_profile, "grammar_quality", 0.5) if _profile else 0.5,
+                settings=_pp_settings,
+            )
+        except ImportError:
+            _budget = None
+
+        _transforms_fired = 0
+        _max_transforms = _budget.max_transforms if _budget else 6
+
+        def _try_transform(name: str, fn, *args, flag_attr: str = "", **kwargs) -> str:
+            nonlocal _transforms_fired
+            if _transforms_fired >= _max_transforms:
+                return args[0] if args else ""
+            if flag_attr and not getattr(_pp_settings, flag_attr, True):
+                return args[0] if args else ""
+            before = args[0] if args else ""
+            out = fn(*args, **kwargs)
+            if out != before:
+                _pp_log.append(name)
+                _transforms_fired += 1
+            return out
+
+        _conf_band = compute_confidence_band(stance_confidence)
+        _b = _budget
+
+        def _run_hedging(t: str) -> str:
+            kw = {"hedge_probability": _b.hedge_prob} if _b else {}
+            kw["profile"] = _profile
+            return _try_transform("hedging", maybe_add_hedging, t, rng, **kw)
+
+        def _run_thinking(t: str) -> str:
+            kw = {"marker_probability": _b.thinking_marker_prob} if _b else {}
+            return _try_transform(
+                "thinking_markers", inject_thinking_markers, t, _profile, rng,
+                flag_attr="enable_thinking_markers", **kw,
+            )
+
+        def _run_redundancy(t: str) -> str:
+            kw = {"redundancy_probability": _b.redundancy_prob} if _b else {}
+            return _try_transform(
+                "redundancy", maybe_add_redundancy, t, rng,
+                flag_attr="enable_redundancy_injection", **kw,
+            )
+
+        def _run_micro(t: str) -> str:
+            kw = {"contradiction_probability": _b.micro_contradiction_prob} if _b else {}
+            kw["agent_id"] = persona.agent_id
+            kw["persona"] = persona
+            return _try_transform(
+                "micro_contradiction", maybe_add_micro_contradiction, t,
+                confidence_band=_conf_band, rng=rng,
+                flag_attr="enable_micro_contradiction", **kw,
+            )
+
+        def _run_fragment(t: str) -> str:
+            kw = {"fragment_probability": _b.fragment_prob} if _b else {}
+            out = _try_transform("fragmentize", maybe_fragmentize, t, _profile, rng, **kw)
+            if out != t and _fragment_looks_dangling(out):
+                return t
+            return out
+
+        def _run_polish(t: str) -> str:
+            kw = {"polish_apply_probability": _b.polish_prob} if _b else {}
+            return _try_transform("degrade_polish", degrade_polish, t, rng, **kw)
+
+        _texture_steps = [
+            ("hedging", _run_hedging),
+            ("thinking_markers", _run_thinking),
+            ("redundancy", _run_redundancy),
+            ("micro_contradiction", _run_micro),
+        ]
+        _tail_steps = [
+            ("fragmentize", _run_fragment),
+            ("degrade_polish", _run_polish),
+        ]
+        _steps = list(_texture_steps)
+        if _budget is not None:
+            tail = list(_tail_steps)
+            rng.shuffle(tail)
+            _steps.extend(tail)
+        else:
+            _steps.extend(_tail_steps)
+        for _name, _fn in _steps:
+            result = _fn(result)
+
+        result = trim_weak_terminal_suffix(result)
 
         # Final min-length guard: post-hoc steps can truncate; never return < 8 words
         if not is_open_text and len(result.split()) < 8 and attempt < _MAX_RETRIES:
@@ -1013,8 +1486,33 @@ async def reasoner_via_llm(
             )
             continue
 
-        return result
-    result = maybe_add_hedging(result, rng)
-    result = maybe_fragmentize(result, _profile, rng)
-    result = degrade_polish(result, rng)
-    return result
+        break
+
+    # Hard final gate: never return contradictory structured narrative.
+    if not is_open_text:
+        final_consistent, _ = validate_narrative_consistency(
+            result,
+            sampled_answer,
+            scale,
+            option_label_map=numeric_label_map,
+        )
+        alignment_meta["final_consistent"] = bool(final_consistent)
+        if not final_consistent:
+            result = _deterministic_alignment_repair(
+                sampled_option=sampled_answer,
+                scale=scale,
+                option_label_map=numeric_label_map,
+            )
+            repaired_consistent, _ = validate_narrative_consistency(
+                result,
+                sampled_answer,
+                scale,
+                option_label_map=numeric_label_map,
+            )
+            alignment_meta["repaired"] = True
+            alignment_meta["hard_block_applied"] = True
+            alignment_meta["final_consistent"] = bool(repaired_consistent)
+
+    if diagnostics_enabled:
+        return {"answer": result, "alignment": alignment_meta, "pp_log": _pp_log}
+    return {"answer": result, "pp_log": _pp_log}

@@ -39,6 +39,13 @@ REFERENCE_DISTRIBUTIONS: Dict[str, Dict[str, float]] = {
         "4": 0.35,
         "5": 0.15,
     },
+    "cost_of_living_satisfaction": {
+        "1": 0.18,
+        "2": 0.24,
+        "3": 0.26,
+        "4": 0.20,
+        "5": 0.12,
+    },
     "shopping_frequency": {
         "rarely": 0.15,
         "1-2 per month": 0.30,
@@ -128,9 +135,23 @@ def get_reference_distribution(
             return domain_ref
     except Exception:
         pass
+    try:
+        from config.generated_registry import load_generated_registry
+
+        generated = load_generated_registry().get("references", {})
+        if question_model_key in generated and isinstance(generated[question_model_key], dict):
+            return generated[question_model_key]
+    except Exception:
+        pass
     ref = REFERENCE_DISTRIBUTIONS.get(question_model_key)
     if ref:
         return ref
+    from config.settings import get_settings
+
+    if get_settings().strict_mode:
+        raise ValueError(
+            f"Missing reference distribution for '{question_model_key}' in strict_mode.",
+        )
     if scale:
         return estimate_reference_from_scale(scale)
     return {}

@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 import numpy as np
 
+from core.rng import ensure_np_rng
 if TYPE_CHECKING:
     from agents.state import AgentState
     from population.personas import Persona
@@ -421,7 +422,7 @@ def _relocate_random(
     if rng is not None:
         chosen = rng.choice(locations, p=weights)
     else:
-        chosen = np.random.choice(locations, p=weights)
+        chosen = ensure_np_rng(None, key=f"life_events_relocate:{persona.agent_id}").choice(locations, p=weights)
     persona.location = str(chosen)
 
 

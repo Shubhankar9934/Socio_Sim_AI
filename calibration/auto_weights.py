@@ -16,6 +16,8 @@ from typing import Any, Callable, Dict, List, Optional
 import numpy as np
 from scipy.optimize import differential_evolution
 from scipy.spatial.distance import jensenshannon
+from config.option_space import canonicalize_distribution
+from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +60,7 @@ class FactorWeightLearner:
     def __init__(self, n_iterations: int = 50, seed: Optional[int] = 42):
         self.n_iterations = n_iterations
         self.seed = seed
+        self._settings = get_settings()
 
     def learn_weights_for_question(
         self,
@@ -83,9 +86,11 @@ class FactorWeightLearner:
                 simulated = simulate_fn(weights)
             except Exception:
                 return 1.0
-            keys = sorted(set(simulated.keys()) | set(reference_distribution.keys()))
+            simulated = canonicalize_distribution("food_delivery_frequency", simulated)
+            ref_norm = canonicalize_distribution("food_delivery_frequency", reference_distribution)
+            keys = sorted(set(simulated.keys()) | set(ref_norm.keys()))
             p = np.array([simulated.get(k, 0.0) for k in keys], dtype=np.float64)
-            q = np.array([reference_distribution.get(k, 0.0) for k in keys], dtype=np.float64)
+            q = np.array([ref_norm.get(k, 0.0) for k in keys], dtype=np.float64)
             if p.sum() > 0:
                 p = p / p.sum()
             if q.sum() > 0:
@@ -150,10 +155,16 @@ class FactorWeightLearner:
             patched_model.factor_weights = factor_weights
 
             counts: Dict[str, int] = {}
-            sample_size = min(100, len(agents))
+            cap = max(10, int(self._settings.calibration_sample_size_cap))
+            sample_size = min(cap, len(agents))
             rng = np.random.default_rng(self.seed)
+            if len(agents) > sample_size:
+                chosen_idx = rng.choice(len(agents), size=sample_size, replace=False)
+                sampled_agents = [agents[int(i)] for i in chosen_idx]
+            else:
+                sampled_agents = list(agents)
 
-            for a in agents[:sample_size]:
+            for a in sampled_agents:
                 persona = a.get("persona")
                 state = a.get("state")
                 if not persona:
@@ -162,10 +173,14 @@ class FactorWeightLearner:
                 env = {"dimension_weights": dict(patched_model.dimension_weights)}
                 if state and hasattr(state, "beliefs"):
                     env["beliefs"] = state.beliefs
+                from world.districts import resolve_location_quality
+
                 ctx = DecisionContext(
                     persona=persona, traits=traits, perception=perception,
                     friends_using=a.get("social_trait_fraction", 0.0),
-                    location_quality=a.get("location_quality", 0.5),
+                    location_quality=resolve_location_quality(
+                        persona.location, a.get("location_quality"),
+                    ),
                     environment=env,
                 )
                 try:
@@ -179,6 +194,7 @@ class FactorWeightLearner:
             total = sum(counts.values())
             if total == 0:
                 return {}
-            return {k: v / total for k, v in counts.items()}
+            out = {k: v / total for k, v in counts.items()}
+            return canonicalize_distribution("food_delivery_frequency", out)
 
         return simulate

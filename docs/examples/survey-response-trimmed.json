@@ -1,0 +1,48 @@
+{
+  "survey_id": "550e8400-e29b-41d4-a716-446655440000",
+  "question": "How often do you order food delivery?",
+  "n_total": 1,
+  "responses": [
+    {
+      "agent_id": "DXB_0000",
+      "answer": "Pretty often — most weeks I grab delivery several times after late shifts.",
+      "interaction_mode": "survey",
+      "turn_understanding": null,
+      "sampled_option": "3-4 per week",
+      "sampled_option_canonical": "3-4 per week",
+      "distribution": {
+        "rarely": 0.04,
+        "1-2 per week": 0.12,
+        "3-4 per week": 0.38,
+        "daily": 0.31,
+        "multiple per day": 0.15
+      },
+      "question_model_key": "food_delivery_frequency",
+      "option_space_key": "food_delivery_frequency",
+      "decision_trace": null,
+      "narrative_alignment_status": null,
+      "run_metadata": null,
+      "response_diagnostics": null,
+      "fallback_flags": null,
+      "demographics": {
+        "age_group": "25-34",
+        "nationality": "Indian",
+        "income_band": "15k-25k",
+        "location": "Bur Dubai",
+        "occupation": "professional",
+        "household_size": "2",
+        "family_children": 0,
+        "has_spouse": true
+      },
+      "lifestyle": {
+        "cuisine_preference": "South Asian",
+        "diet": "no restrictions",
+        "hobby": "fitness",
+        "work_schedule": "evening-heavy",
+        "health_focus": "moderate",
+        "commute_method": "metro"
+      },
+      "error": null
+    }
+  ]
+}

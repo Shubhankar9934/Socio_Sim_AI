@@ -40,16 +40,27 @@ def list_agents(
 
 
 @router.get("/{agent_id}", response_model=AgentDetail)
-def get_agent(agent_id: str) -> AgentDetail:
+def get_agent(agent_id: str, debug: bool = Query(False)) -> AgentDetail:
     """Get one agent by id with persona and state."""
     for a in agents_store:
         p = a.get("persona")
         if p and p.agent_id == agent_id:
             state = a.get("state")
+            decision_profile = None
+            if debug and state and hasattr(state, "latent_state") and hasattr(state, "beliefs"):
+                latent = state.latent_state.to_dict()
+                beliefs = state.beliefs.to_dict()
+                dominant_traits = sorted(latent.items(), key=lambda kv: kv[1], reverse=True)[:3]
+                decision_profile = {
+                    "latent": latent,
+                    "beliefs_summary": beliefs,
+                    "dominant_traits": [k for k, _ in dominant_traits],
+                }
             return AgentDetail(
                 agent_id=agent_id,
                 persona=p.model_dump(),
                 state=state.to_dict() if state and hasattr(state, "to_dict") else None,
+                decision_profile=decision_profile,
             )
     from fastapi import HTTPException
     raise HTTPException(status_code=404, detail="Agent not found")

@@ -1,36 +1,40 @@
 # Population API
 
-Source collection: **JADU_Full_API** → folder `population` → `POST /population/generate`.
+**Purpose:** Create a synthetic cohort matching domain demographics, validate marginal fit, attach [`AgentState`](../../agents/state.py), build a social graph, and replace the process-global population.
+
+**Prerequisites:** Active domain with `demographics.json` (via [`config/domain.py`](../../config/domain.py) / [`get_demographics()`](../../config/demographics.py)).
+
+**Postman:** folder `population` → `POST /population/generate`.
+
+**Sample I/O:** [`api_details_input_output.txt`](../../api_details_input_output.txt) — `Population –` / `POST .../population/generate` **~6–41** (request + output keys match the ledger below, including `segment_distribution` counts).
 
 ---
 
-## Endpoint
+## HTTP contract
 
-| Method | Path | Description |
-|--------|------|-------------|
-| **POST** | `/population/generate` | Create `n` synthetic personas, validate realism, build `AgentState` per agent, build social graph, replace in-memory population. |
+| Method | Path | Request model | Response |
+|--------|------|---------------|----------|
+| **POST** | `/population/generate` | [`GeneratePopulationRequest`](../../api/schemas.py) | JSON dict (see below) |
 
 ---
 
 ## Request body (`GeneratePopulationRequest`)
 
-Defined in [api/schemas.py](../../api/schemas.py) as `GeneratePopulationRequest`.
+| Field | Type | Default | Constraints | Purpose |
+|-------|------|---------|-------------|---------|
+| `n` | int | 500 | Schema 10–10000; route rejects `n > 10000` with 400 | Number of personas. |
+| `method` | string | `"bayesian"` | `monte_carlo` \| `bayesian` \| `ipf` | Synthesis algorithm (see [Synthesis methods](#synthesis-methods)). |
+| `id_prefix` | string | `"DXB"` | any | Prefix for `agent_id` (e.g. `DXB_0000`). |
+| `seed` | int \| null | null | optional | RNG seed for reproducibility where supported. |
 
-| Field | Type | Required | Constraints | Purpose |
-|-------|------|----------|-------------|---------|
-| `n` | int | no (default 500) | 10–10000 in schema; route also rejects `n > 10000` | Number of synthetic agents to create. |
-| `method` | string | no (default `"bayesian"`) | One of `"monte_carlo"`, `"bayesian"`, `"ipf"` | Which synthesis algorithm to use (see below). |
-| `id_prefix` | string | no (default `"DXB"`) | any string | Prefix for `agent_id` (e.g. `DXB_0000`). Lets you tag runs or cities. |
-| `seed` | int or null | no | optional | RNG seed for reproducible draws (personas, graph, noisy sampling). `null` = non-deterministic where supported. |
-
-### Example
+### Example request
 
 ```json
 {
   "n": 50,
   "method": "bayesian",
   "id_prefix": "DXB",
-  "seed": null
+  "seed": 42
 }
 ```
 
@@ -38,16 +42,24 @@ Defined in [api/schemas.py](../../api/schemas.py) as `GeneratePopulationRequest`
 
 ## Response body (200)
 
-| Field | Type | Meaning |
-|-------|------|---------|
-| `n` | int | `len(personas)` after generation (should match requested `n` if no internal cap). |
-| `method` | string | Echo of request `method`. |
-| `realism_passed` | bool | `true` if aggregate realism score ≥ threshold from settings. |
-| `realism_score` | float | Mean of per-demographic “1 − JS divergence” scores (see below). **Excludes** `multimodality` and `segment_entropy` from the mean. |
-| `per_attribute` | object | Per-attribute diagnostics: marginal fit + extras. |
-| `segment_distribution` | object | Count of agents per `population_segment` (not proportions). |
+### Response field ledger
 
-### Example response (annotated)
+| Field | Type | Meaning | Formula / algorithm | Code |
+|-------|------|---------|---------------------|------|
+| `n` | int | Count returned | `len(personas)` | [`generate_population_endpoint`](../../api/routes/population.py) |
+| `method` | string | Echo | Request body passthrough | same |
+| `realism_passed` | bool | Gate vs threshold | `realism_score >= settings.population_realism_threshold` | [`validate_population`](../../population/validator.py) + route |
+| `realism_score` | float | Mean marginal fit | Mean of `per_attribute[k]` for `k` ∈ {age, nationality, income, location, household_size, occupation} only | [`validate_population`](../../population/validator.py) |
+| `per_attribute.*` | float | Per-marginal similarity | For each demographic marginal: `1.0 - JS(target, empirical)` | [`jensen_shannon_divergence`](../../population/validator.py) |
+| `per_attribute.multimodality` | float | Latent multimodality | GMM BIC ratio score in `[0,1]`; `0` if `n<30` or no sklearn | [`multimodality_score`](../../population/validator.py) |
+| `per_attribute.segment_entropy` | float | Spread of segments | Shannon entropy (natural log) of segment proportion vector | [`segment_distribution`](../../population/validator.py) + `scipy.stats.entropy` |
+| `segment_distribution` | object | Segment counts | `Counter(population_segment)` → counts (not proportions) | Route; segments from [`_stamp_segments`](../../population/synthesis.py) |
+
+**Jensen–Shannon (implementation):** [`_align_distributions`](../../population/validator.py) builds sorted union of keys, normalizes both vectors, then `scipy.spatial.distance.jensenshannon(p, q)` (default base = e; value in ~[0, 1]). Stored diagnostic is `1.0 - js` per attribute.
+
+**`realism_score` explicitly excludes** `multimodality` and `segment_entropy` from the mean (see [`validate_population`](../../population/validator.py) loop).
+
+### Example response
 
 ```json
 {
@@ -67,105 +79,136 @@ Defined in [api/schemas.py](../../api/schemas.py) as `GeneratePopulationRequest`
   },
   "segment_distribution": {
     "health_premium": 6,
-    "budget_worker": 15,
-    "convenience_maximizer": 3,
-    "family_homemaker": 11,
-    "young_professional": 10,
-    "student_explorer": 5
+    "budget_worker": 15
   }
 }
 ```
 
 ---
 
-## How each output value is calculated
+## Synthesis methods
 
-### `per_attribute` (marginal attributes)
+All paths end in [`generate_population`](../../population/synthesis.py), which calls method-specific generators then **stamps** archetypes, segments, narrative styles, and media subscriptions.
 
-For each demographic attribute in `get_demographics().get_all_marginals()` ([population/validator.py](../../population/validator.py) + [config/demographics.py](../../config/demographics.py)):
+| Method | Function | What it does |
+|--------|----------|--------------|
+| `monte_carlo` | [`generate_monte_carlo`](../../population/synthesis.py) | Independent draws from **marginals** only (`age`, `nationality`, `income`, `location` marginal, `household_size` conditional on age via `HOUSEHOLD_GIVEN_AGE`, `occupation` marginal). No cross-attribute joint beyond household/family CPT. |
+| `bayesian` | [`generate_bayesian`](../../population/synthesis.py) | **Chain:** nationality → `income_given_nationality` → `location_given_income` → household (age-conditional) → `occupation_given_nationality`. Uses [`_noisy_weighted_choice`](../../population/synthesis.py) on categoricals. |
+| `ipf` | [`generate_ipf`](../../population/synthesis.py) | [`_ipf_2d`](../../population/synthesis.py) fits **age × nationality** joint to both marginals; sample `(age, nationality)` from joint; fill rest with same Bayesian chain as above. |
 
-1. **Target distribution** `target_dist`: from domain demographics (marginals for age, nationality, income, location, household_size, occupation).
-2. **Empirical distribution** `empirical`: share of each category across generated `Persona` list (`_distribution_from_personas`).
-3. **Jensen–Shannon divergence** `JS(target, empirical)` between aligned probability vectors (`jensen_shannon_divergence`).
-4. **Stored value** for that key: `1.0 - JS` (higher = closer match to target). Same as “similarity” to the reference marginal.
+Shared post-processing for every persona: family from [`_family_from_household`](../../population/synthesis.py) (CPT + optional [`cultural_family_multiplier`](../../config/domain.py)), mobility from [`_mobility_from_location`](../../population/synthesis.py), lifestyle from [`_lifestyle_from_demographics`](../../population/synthesis.py), anchors from [`_personal_anchors_from_demographics`](../../population/synthesis.py).
 
-So `per_attribute.age` ≈ 0.92 means the synthetic age histogram is close to the configured age marginal.
+---
 
-### `multimodality`
+## Post-synthesis stamps (in order)
 
-- From `multimodality_score(personas)` in [population/validator.py](../../population/validator.py).
-- Builds latent trait vectors per persona (personality + `init_from_persona`), stacks to matrix `X`.
-- If `len(personas) < 30` or `sklearn` missing → **0.0**.
-- Otherwise fits two Gaussian Mixture Models (1 vs `k` components, `k` derived from segment count), compares BIC; returns a score in `[0,1]` indicating how much a multi-modal latent structure is favored.
-- **Not** included in `realism_score` mean (diagnostic only).
+| Step | Function | Inputs → effect |
+|------|----------|-----------------|
+| Archetypes | [`_stamp_archetypes`](../../population/synthesis.py) | Rule list `_ARCHETYPE_RULES` → sets `personal_anchors.archetype` (first match or `"default"`). |
+| Segments | [`_stamp_segments`](../../population/synthesis.py) | [`assign_segment(age, income, location, rng)`](../../population/segments.py): scores ∝ `segment.weight × demographic_fit`; sample segment name → `meta.population_segment`. |
+| Narrative style | [`_stamp_narrative_styles`](../../population/synthesis.py) | [`derive_narrative_style_profile`](../../agents/narrative.py) → verbosity, tone, style, slang, grammar on `personal_anchors.narrative_style`. |
+| Media diet | [`_stamp_media_subscriptions`](../../population/synthesis.py) | Beliefs from persona → [`assign_media_diet`](../../media/sources.py) → `persona.media_subscriptions`. |
 
-### `segment_entropy`
+---
 
-- `segment_distribution(personas)` → empirical probabilities over `Persona.meta.population_segment`.
-- `segment_entropy` = Shannon entropy of that probability vector (`scipy.stats.entropy`), in nats.
-- Higher = more spread across segments; lower = concentrated in few segments.
-- **Not** included in `realism_score` mean.
+## Social graph & `social_trait_fraction`
 
-### `realism_score`
+After validation, the route builds agents and graph:
 
-```text
-realism_score = mean(per_attribute[k] for k in marginals only)
-              = mean of (1 - JS) over age, nationality, income, location, household_size, occupation
+1. [`AgentState.from_persona`](../../agents/state.py) for each persona.
+2. [`build_social_network(personas, seed=...)`](../../social/network.py): **Barabási–Albert** with `m=4` (capped), node `i` ↔ `personas[i]` via `G.graph["agent_ids"]`.
+3. Edge metadata: [`assign_relationship_types`](../../social/network.py) (neighbor/coworker/friend), [`_assign_similarity_weights`](../../social/network.py) via [`persona_similarity`](../../social/influence.py).
+4. Trait map: `True` iff `lifestyle.primary_service_preference >= 0.5`.
+5. [`fraction_friends_with_trait`](../../social/influence.py): similarity-weighted fraction of neighbors with trait; stored on agent dict and `state.set_social_trait_fraction`.
+
+---
+
+## Execution trace (numbered)
+
+1. [`api/routes/population.py:generate_population_endpoint`](../../api/routes/population.py)
+2. [`get_settings`](../../config/settings.py) → `population_realism_threshold`
+3. [`generate_population`](../../population/synthesis.py) → method branch → stamps
+4. [`validate_population`](../../population/validator.py) → `(passed, score, per_attr)` with `passed = (score >= realism_threshold)` (same threshold the route passes in)
+5. Loop: [`AgentState.from_persona`](../../agents/state.py), `location_quality_for_satisfaction` ([`world/districts`](../../world/districts.py))
+6. [`build_social_network`](../../social/network.py) → `app_state.social_graph = graph`
+7. [`fraction_friends_with_trait`](../../social/influence.py) per agent
+8. `agents_store.clear(); agents_store.extend(agents)`
+9. Build `segment_distribution` with `Counter` on `meta.population_segment`
+
+---
+
+## Diagram
+
+```mermaid
+sequenceDiagram
+  participant Client
+  participant API as FastAPI_population
+  participant Syn as synthesis_generate_population
+  participant Val as validator_validate_population
+  participant AS as AgentState_from_persona
+  participant Net as build_social_network
+  participant Inf as fraction_friends_with_trait
+  participant Store as agents_store
+
+  Client->>API: POST_generate
+  API->>Syn: generate_population
+  Syn->>Syn: stamps_archetype_segment_style_media
+  API->>Val: validate_population
+  Val-->>API: passed_score_per_attr
+  loop each_persona
+    API->>AS: from_persona
+  end
+  API->>Net: Barabasi_Albert_m4
+  API->>Inf: social_trait_fraction
+  API->>Store: replace_population
+  API-->>Client: JSON_response
 ```
 
-Threshold: `settings.population_realism_threshold` ([config/settings.py](../../config/settings.py)), compared in [api/routes/population.py](../../api/routes/population.py).
-
-### `realism_passed`
-
-`realism_passed = (realism_score >= population_realism_threshold)`.
-
-### `segment_distribution`
-
-- `Counter(p.meta.population_segment for p in personas)` in [api/routes/population.py](../../api/routes/population.py).
-- **Counts**, not fractions. Segment labels come from `_stamp_segments` during synthesis (domain segments config).
-
----
-
-## End-to-end code flow (trigger → response)
-
-High-level call graph:
-
-1. **FastAPI** → [api/routes/population.py](../../api/routes/population.py) `generate_population_endpoint(body)`
-2. **`get_settings()`** → realism threshold
-3. **`generate_population(...)`** → [population/synthesis.py](../../population/synthesis.py)
-   - Branches: `generate_monte_carlo` | `generate_bayesian` | `generate_ipf` (same file)
-   - Post-steps (all methods):
-     - `_stamp_archetypes(personas)`
-     - `_stamp_segments(personas, seed=...)`
-     - `_stamp_narrative_styles(personas, seed=...)`
-     - `_stamp_media_subscriptions(personas, seed=...)`
-4. **`validate_population(personas, realism_threshold=...)`** → [population/validator.py](../../population/validator.py)  
-   Returns `(passed, score, per_attr)`.
-5. **Per persona** → [agents/state.py](../../agents/state.py) `AgentState.from_persona(p)` → attached dict `{ persona, state, social_trait_fraction, location_quality }`
-6. **`build_social_network(personas, seed=...)`** → [social/network.py](../../social/network.py) (Barabási–Albert style graph); stored in `api.state.social_graph`
-7. **`fraction_friends_with_trait`** → [social/influence.py](../../social/influence.py) using trait = `primary_service_preference >= 0.5`; updates `social_trait_fraction` on agent dict and `state.set_social_trait_fraction`
-8. **`app_state.agents_store`** cleared and filled with agent dicts
-9. **Response JSON** built from `validate_population` outputs + segment counts
-
-### Classes / types involved
-
-- **`Persona`**, **`PersonaMeta`**, **`LifestyleCoefficients`**, etc. → [population/personas.py](../../population/personas.py)
-- **`AgentState`** → [agents/state.py](../../agents/state.py)
-- **Graph** → network structure in `social` package; referenced as `app_state.social_graph`
-
-### Data sources (why it’s not “one hardcoded population”)
-
-- **Demographics / marginals / conditionals**: loaded for the active **domain** via `get_demographics()` / `get_domain_config()` → typically `data/domains/<domain_id>/demographics.json` and related domain files ([config/domain.py](../../config/domain.py)).
+```mermaid
+flowchart LR
+  subgraph methods [Synthesis_methods]
+    MC[monte_carlo_marginals]
+    BY[bayesian_chain]
+    IPF[ipf_age_x_nat]
+  end
+  methods --> stamps[stamps_archetype_segment_narrative_media]
+  stamps --> validate[validate_JS_scores]
+```
 
 ---
 
-## Errors
+## Worked mini-example (one attribute)
 
-- **400** if `n > 10000` (route-level check).
+Suppose target age marginal is `P*(18-24)=0.5`, `P*(25-34)=0.5`. Three personas have ages `18-24`, `18-24`, `25-34`.
+
+- Empirical: `P(18-24)=2/3`, `P(25-34)=1/3`.
+- Aligned vectors (sorted keys): `p = (0.5, 0.5)`, `q = (2/3, 1/3)`.
+- `JS = jensenshannon(p, q)` (scipy).
+- Reported score for `age`: `1 - JS`.
 
 ---
 
-## Prerequisites / side effects
+## Configuration & data files
 
-- **Replaces** the entire in-memory `agents_store` and `social_graph`.
-- Must be called **before** surveys, analytics, evaluation, and most calibration flows that need `agents_store`.
+- [`config/settings.py`](../../config/settings.py): `population_realism_threshold`
+- Domain: `data/domains/<id>/demographics.json` and domain config for `premium_areas`, `cultural_family_multiplier`, cuisine/diet pools, etc.
+
+---
+
+## Errors & side effects
+
+- **400** if `n > 10000`.
+- **Replaces** entire `agents_store` and `social_graph`; required before surveys on a fresh cohort.
+
+---
+
+## Known limitations
+
+- `POPULATION_SEGMENTS` in [`population/segments.py`](../../population/segments.py) includes **Dubai-oriented** default location names; generalize via domain work for other cities.
+- `realism_score` mean uses **six** marginals only; multimodality/segment entropy are diagnostics.
+
+---
+
+## Cross-links
+
+- [`docs/modules/population.md`](../modules/population.md) — module overview

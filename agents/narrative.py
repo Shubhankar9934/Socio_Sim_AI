@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import random
 import re
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
 # Persistent Narrative Style Profile
@@ -33,6 +33,97 @@ class NarrativeStyleProfile:
     preferred_style: str    # one of NARRATIVE_STYLES
     slang_level: float      # 0.0 = formal, 1.0 = heavy slang
     grammar_quality: float  # 0.0 = fragments/typos, 1.0 = proper grammar
+    voice_register: str = "conversational"  # analytical | conversational | blunt | rambling
+    rhetorical_habit: str = "direct"  # direct | narrative | list_pros_cons | emotional_lead
+    avoid_phrases: Tuple[str, ...] = field(default_factory=tuple)
+
+
+# Discourse markers used to filter opening pools and sample per-agent bans
+_CRUTCH_SUBSTRINGS_OPENING: Tuple[str, ...] = (
+    "honestly", "i mean", "tbh", "umm", "uhh", "i guess", "kinda",
+    "you know", "so like", "ok so like", "basically,", "lol", "lmao",
+    "omg", "ngl", "idk",
+)
+
+_GLOBAL_CRUTCH_PHRASES: Tuple[str, ...] = (
+    "honestly", "I mean", "you know", "kind of", "sort of", "I guess", "tbh", "like",
+)
+
+
+def _derive_voice_axes(
+    preferred_tone: str,
+    grammar: float,
+    slang: float,
+    personality: Optional[Any],
+    rng: random.Random,
+) -> Tuple[str, str, Tuple[str, ...]]:
+    """Map demographics-derived tone + Big-Five vector to voice register and habit."""
+    o = float(getattr(personality, "openness_to_experience", 0.5) or 0.5) if personality else 0.5
+    c = float(getattr(personality, "conscientiousness", 0.5) or 0.5) if personality else 0.5
+    e = float(getattr(personality, "extraversion", 0.5) or 0.5) if personality else 0.5
+    a = float(getattr(personality, "agreeableness", 0.5) or 0.5) if personality else 0.5
+
+    if preferred_tone in ("blunt", "terse", "matter_of_fact"):
+        register = "blunt"
+    elif c >= 0.58 and grammar >= 0.52:
+        register = "analytical"
+    elif o >= 0.58 and c <= 0.42:
+        register = "rambling"
+    elif e >= 0.55 or slang >= 0.48:
+        register = "conversational"
+    else:
+        register = rng.choices(
+            ["conversational", "analytical", "rambling", "blunt"],
+            weights=[0.42, 0.22, 0.20, 0.16],
+            k=1,
+        )[0]
+
+    if register == "blunt":
+        habit = "direct" if a >= 0.45 else "list_pros_cons"
+    elif register == "analytical":
+        habit = rng.choices(
+            ["list_pros_cons", "direct", "narrative"],
+            weights=[0.45, 0.40, 0.15],
+            k=1,
+        )[0]
+    elif register == "rambling":
+        habit = rng.choices(
+            ["narrative", "emotional_lead", "direct"],
+            weights=[0.45, 0.35, 0.20],
+            k=1,
+        )[0]
+    else:
+        habit = rng.choices(
+            ["direct", "narrative", "emotional_lead", "list_pros_cons"],
+            weights=[0.38, 0.28, 0.22, 0.12],
+            k=1,
+        )[0]
+
+    n_avoid = 0
+    if register in ("analytical", "blunt"):
+        n_avoid = rng.randint(2, min(4, len(_GLOBAL_CRUTCH_PHRASES)))
+    elif grammar >= 0.68:
+        n_avoid = rng.randint(1, 3)
+    elif register == "rambling" and slang > 0.5:
+        n_avoid = rng.randint(0, 2)
+    pool = list(_GLOBAL_CRUTCH_PHRASES)
+    rng.shuffle(pool)
+    avoid = tuple(pool[:n_avoid]) if n_avoid else ()
+
+    return register, habit, avoid
+
+
+def _opening_candidates_for_register(
+    voice_register: str,
+    patterns: List[str],
+) -> List[str]:
+    low = [p for p in patterns if not any(s in p.lower() for s in _CRUTCH_SUBSTRINGS_OPENING)]
+    if voice_register in ("analytical", "blunt"):
+        return low if low else list(patterns)
+    if voice_register == "rambling":
+        longish = [p for p in patterns if len(p) > 22]
+        return longish if longish else list(patterns)
+    return list(patterns)
 
 
 def derive_narrative_style_profile(
@@ -41,6 +132,7 @@ def derive_narrative_style_profile(
     occupation: str,
     nationality: str,
     rng: random.Random,
+    personality: Optional[Any] = None,
 ) -> NarrativeStyleProfile:
     """Deterministically derive a style profile from demographics.
 
@@ -99,12 +191,19 @@ def derive_narrative_style_profile(
     grammar = base_grammar + rng.uniform(-0.12, 0.12)
     grammar = max(0.0, min(1.0, grammar))
 
+    voice_register, rhetorical_habit, avoid_phrases = _derive_voice_axes(
+        preferred_tone, grammar, slang, personality, rng,
+    )
+
     return NarrativeStyleProfile(
         verbosity=verbosity,
         preferred_tone=preferred_tone,
         preferred_style=preferred_style,
         slang_level=slang,
         grammar_quality=grammar,
+        voice_register=voice_register,
+        rhetorical_habit=rhetorical_habit,
+        avoid_phrases=avoid_phrases,
     )
 
 
@@ -131,8 +230,8 @@ NARRATIVE_STYLES: List[str] = [
 ]
 
 STYLE_WEIGHTS: Dict[str, float] = {
-    "routine": 0.12,
-    "preference": 0.11,
+    "routine": 0.08,
+    "preference": 0.09,
     "constraint": 0.10,
     "family": 0.08,
     "health": 0.07,
@@ -144,7 +243,7 @@ STYLE_WEIGHTS: Dict[str, float] = {
     "spontaneous": 0.05,
     "cultural": 0.05,
     "practical": 0.05,
-    "emotional": 0.04,
+    "emotional": 0.10,
 }
 
 # ---------------------------------------------------------------------------
@@ -162,19 +261,21 @@ TONE_MODIFIERS: List[str] = [
     "distracted",
     "skeptical",
     "practical",
+    "emotional_practical",
 ]
 
 TONE_WEIGHTS: Dict[str, float] = {
-    "casual": 0.25,
-    "matter_of_fact": 0.16,
+    "casual": 0.19,
+    "matter_of_fact": 0.14,
     "reflective": 0.12,
     "humorous": 0.08,
-    "terse": 0.15,
-    "blunt": 0.10,
-    "lazy": 0.08,
-    "distracted": 0.06,
+    "terse": 0.13,
+    "blunt": 0.08,
+    "lazy": 0.06,
+    "distracted": 0.05,
     "skeptical": 0.04,
     "practical": 0.04,
+    "emotional_practical": 0.07,
 }
 
 TONE_HINTS: Dict[str, str] = {
@@ -188,6 +289,7 @@ TONE_HINTS: Dict[str, str] = {
     "distracted": "Answer like you're doing something else at the same time. Slightly unfocused.",
     "skeptical": "Sound slightly doubtful or questioning — not convinced it's that simple.",
     "practical": "Focus on what actually works for you — no fluff, just outcomes.",
+    "emotional_practical": "Mix feelings with practical reasoning. Say how you FEEL first, then explain the practical reason.",
 }
 
 LENGTH_DISTRIBUTION: Dict[str, float] = {
@@ -347,7 +449,79 @@ OPENING_PATTERNS: List[str] = [
     "Funny thing is, I",
     "Not gonna overthink this,",
     "Compared to last year, I",
+    # --- thinking-aloud (10) ---
+    "Let me think... I",
+    "So like, how do I put this, I",
+    "It's funny because I",
+    "I was just thinking about this, I",
+    "This is a good one, I",
+    "Hmm wait, I",
+    "Ok so like... I",
+    "How do I say this... I",
+    "I keep going back and forth but I",
+    "That's actually a tricky one, I",
+    # --- context-first (8) ---
+    "So my situation is, I",
+    "Like the other day, I",
+    "With how things have been lately, I",
+    "So what happened was, I",
+    "Where I'm at right now, I",
+    "The way my life is these days, I",
+    "Given everything going on, I",
+    "So here's the thing with me, I",
+    # --- emotional-first (8) ---
+    "Honestly it bugs me that",
+    "I get so frustrated when",
+    "Makes me happy that",
+    "I hate how",
+    "I love that",
+    "It annoys me but",
+    "Can't lie, it makes me feel good when",
+    "I get stressed about",
+    # --- income-aware / economic (6) ---
+    "Money's tight so",
+    "Can't really afford to",
+    "End of the month it's like",
+    "Budget-wise, I",
+    "With prices these days, I",
+    "Salary hasn't changed but",
+    # --- redundancy-natural (4) ---
+    "I mean, I really really",
+    "Yeah so basically, basically I",
+    "Like I said, I just, I",
+    "It's just, you know, it's just",
 ]
+
+
+_LIFESTYLE_OPENING_SUBSTR = (
+    "trainer", "my trainer", "gym ", "gym,", "gym.",
+)
+
+
+def _filter_lifestyle_openings(pool: List[str], income_band: Optional[str]) -> List[str]:
+    """Drop gym/trainer-templated openings for tight budgets or sharp registers."""
+    if not pool:
+        return pool
+    if income_band in ("<10k", "10-25k"):
+        filt = [p for p in pool if not any(s in p.lower() for s in _LIFESTYLE_OPENING_SUBSTR)]
+        return filt if filt else pool
+    return pool
+
+
+def _opening_pool_for_profile(
+    profile: Optional[NarrativeStyleProfile],
+    income_band: Optional[str] = None,
+) -> List[str]:
+    if profile is None:
+        pool = list(OPENING_PATTERNS)
+        return _filter_lifestyle_openings(pool, income_band)
+    pool = _opening_candidates_for_register(profile.voice_register, OPENING_PATTERNS)
+    reg = str(getattr(profile, "voice_register", "") or "")
+    if reg in ("blunt", "analytical"):
+        filt = [p for p in pool if not any(s in p.lower() for s in _LIFESTYLE_OPENING_SUBSTR)]
+        pool = filt if filt else pool
+    return _filter_lifestyle_openings(pool, income_band)
+
 
 # ---------------------------------------------------------------------------
 # 8 grammatical sentence structures
@@ -362,6 +536,8 @@ SENTENCE_STRUCTURES: List[str] = [
     "question_then_answer",
     "direct_statement",
     "conditional",
+    "story_then_opinion",
+    "situation_then_take",
 ]
 
 # ---------------------------------------------------------------------------
@@ -536,6 +712,21 @@ _POSITIVE_SIGNALS: Dict[str, List[str]] = {
     ],
 }
 
+LIKELIHOOD_KEYWORDS: Dict[str, List[str]] = {
+    "very unlikely": ["very unlikely", "almost impossible", "definitely not", "no chance"],
+    "unlikely": ["unlikely", "probably not", "not likely", "doubt it"],
+    "neutral": ["depends", "not sure", "mixed", "could go either way"],
+    "likely": ["likely", "probably", "i think i will", "good chance"],
+    "very likely": ["very likely", "definitely", "absolutely", "for sure"],
+}
+
+_LIKELIHOOD_CONTRADICTION_PAIRS: Dict[str, List[str]] = {
+    "very unlikely": ["likely", "very likely"],
+    "unlikely": ["likely", "very likely"],
+    "likely": ["unlikely", "very unlikely"],
+    "very likely": ["unlikely", "very unlikely"],
+}
+
 _POSITIVE_STANCE_KEYWORDS = (
     "support", "agree", "favor", "favour", "approve", "back", "stability",
     "relief", "benefit", "help", "good idea", "should implement",
@@ -625,26 +816,47 @@ def validate_narrative_consistency(
             return False, sampled_option
         return True, None
 
-    # Layer 1: direct frequency keyword contradiction
-    contradicting_options = _CONTRADICTION_PAIRS.get(sampled_option, [])
-    for option in contradicting_options:
-        keywords = FREQUENCY_KEYWORDS.get(option, [])
-        for kw in keywords:
-            if kw in text_lower:
-                return False, option
+    lowered_scale = [s.lower() for s in scale]
+    is_frequency_scale = any(k in lowered_scale for k in FREQUENCY_KEYWORDS.keys())
+    is_likelihood_scale = any(k in lowered_scale for k in LIKELIHOOD_KEYWORDS.keys())
 
-    # Layer 2: indirect contradiction patterns for THIS option
-    indirect = _INDIRECT_CONTRADICTIONS.get(sampled_option, [])
-    for pattern in indirect:
-        if pattern in text_lower:
-            return False, sampled_option
+    if is_likelihood_scale:
+        for option in _LIKELIHOOD_CONTRADICTION_PAIRS.get(sampled_option, []):
+            for kw in LIKELIHOOD_KEYWORDS.get(option, []):
+                if kw in text_lower:
+                    return False, option
+        # Explicitly catch frequency negation phrases for positive likelihood picks.
+        if sampled_option in {"likely", "very likely"}:
+            for anti in ("rarely", "almost never", "hardly ever", "no chance"):
+                if anti in text_lower:
+                    return False, "unlikely"
+        if sampled_option in {"unlikely", "very unlikely"}:
+            for anti in ("definitely", "for sure", "very likely"):
+                if anti in text_lower:
+                    return False, "likely"
+        return True, None
 
-    # Layer 3: positive signals for contradicting options
-    for option in contradicting_options:
-        signals = _POSITIVE_SIGNALS.get(option, [])
-        for sig in signals:
-            if sig in text_lower:
-                return False, option
+    if is_frequency_scale:
+        # Layer 1: direct frequency keyword contradiction
+        contradicting_options = _CONTRADICTION_PAIRS.get(sampled_option, [])
+        for option in contradicting_options:
+            keywords = FREQUENCY_KEYWORDS.get(option, [])
+            for kw in keywords:
+                if kw in text_lower:
+                    return False, option
+
+        # Layer 2: indirect contradiction patterns for THIS option
+        indirect = _INDIRECT_CONTRADICTIONS.get(sampled_option, [])
+        for pattern in indirect:
+            if pattern in text_lower:
+                return False, sampled_option
+
+        # Layer 3: positive signals for contradicting options
+        for option in contradicting_options:
+            signals = _POSITIVE_SIGNALS.get(option, [])
+            for sig in signals:
+                if sig in text_lower:
+                    return False, option
 
     return True, None
 
@@ -692,6 +904,8 @@ def pick_opening_deduplicated(
     persona_context: Optional[dict] = None,
     used_openings: Optional[set] = None,
     rng: Optional[random.Random] = None,
+    profile: Optional[NarrativeStyleProfile] = None,
+    income_band: Optional[str] = None,
 ) -> str:
     """Pick an opening that hasn't been used in this batch yet.
 
@@ -702,9 +916,12 @@ def pick_opening_deduplicated(
     ctx = persona_context or {}
     used = used_openings if used_openings is not None else set()
 
-    available = [t for t in OPENING_PATTERNS if t not in used]
+    pool = _opening_pool_for_profile(profile, income_band=income_band)
+    available = [t for t in pool if t not in used]
     if not available:
         used.clear()
+        available = list(pool)
+    if not available:
         available = list(OPENING_PATTERNS)
 
     template = r.choice(available)
@@ -745,6 +962,39 @@ def pick_persona_anchor(
 # Style instruction builder (injected into LLM prompt)
 # ---------------------------------------------------------------------------
 
+_VOICE_REGISTER_HINTS: Dict[str, str] = {
+    "analytical": "analytical and measured — prefer clear wording, minimal filler discourse markers",
+    "conversational": "warm and conversational — natural spoken rhythm is fine",
+    "blunt": "direct and blunt — short clauses, skip hedging and filler",
+    "rambling": "relaxed and associative — you may wander slightly but stay on the question",
+}
+
+_RHETORICAL_HINTS: Dict[str, str] = {
+    "direct": "get to the point quickly",
+    "narrative": "a brief lived-detail lead-in is OK before the answer",
+    "list_pros_cons": "if torn, use a compact pros/cons structure instead of vague 'kinda torn' phrasing",
+    "emotional_lead": "lead with how you feel, then justify briefly",
+}
+
+
+def format_voice_instruction_line(profile: Optional[NarrativeStyleProfile]) -> str:
+    """One-line voice summary for the NARRATIVE STYLE block."""
+    if profile is None:
+        return ""
+    reg = getattr(profile, "voice_register", "conversational") or "conversational"
+    habit = getattr(profile, "rhetorical_habit", "direct") or "direct"
+    vh = _VOICE_REGISTER_HINTS.get(reg, _VOICE_REGISTER_HINTS["conversational"])
+    hh = _RHETORICAL_HINTS.get(habit, _RHETORICAL_HINTS["direct"])
+    return f"Voice: {vh}; rhetorical habit: {hh}."
+
+
+def format_avoid_phrases_line(profile: Optional[NarrativeStyleProfile]) -> str:
+    if not profile or not getattr(profile, "avoid_phrases", ()):
+        return ""
+    parts = ", ".join(f'"{p}"' for p in profile.avoid_phrases[:6])
+    return f"Avoid these crutch phrases in your answer: {parts}."
+
+
 def build_style_instruction(
     style: str,
     structure: str,
@@ -754,6 +1004,8 @@ def build_style_instruction(
     length: str = "medium",
     tone: str = "casual",
     include_anchor: bool = True,
+    voice_line: str = "",
+    avoid_line: str = "",
 ) -> str:
     """Build a short instruction block telling the LLM how to write this response."""
     structure_hints = {
@@ -765,6 +1017,8 @@ def build_style_instruction(
         "question_then_answer": "Pose a rhetorical question to yourself, then answer it.",
         "direct_statement": "Jump straight into your answer with no preamble.",
         "conditional": "Give your view and a typical situation where it applies, without defaulting to 'it depends'.",
+        "story_then_opinion": "Tell a quick story from your life first, then give your opinion based on that.",
+        "situation_then_take": "Describe your current situation briefly, then say what you think because of it.",
     }
     hint = structure_hints.get(structure, "Write naturally.")
     length_hint = LENGTH_HINTS.get(length, LENGTH_HINTS["medium"])
@@ -780,9 +1034,18 @@ def build_style_instruction(
         else f"Begin your answer similarly to: \"{opening}\"\n"
     )
 
+    voice_block = ""
+    if voice_line:
+        voice_block = f"{voice_line}\n"
+    avoid_block = ""
+    if avoid_line:
+        avoid_block = f"{avoid_line}\n"
+
     return (
         f"Narrative voice: {style}. {hint}\n"
         f"Tone: {tone_hint}\n"
+        f"{voice_block}"
+        f"{avoid_block}"
         f"{opening_instruction}"
         f"{anchor_line}"
         f"{length_hint}\n"

@@ -128,11 +128,11 @@ def multimodality_score(personas: List[Persona]) -> float:
     sufficient data is unavailable.
     """
     try:
+        from sklearn.metrics import silhouette_score
         from sklearn.mixture import GaussianMixture
     except ImportError:
         return 0.0
 
-    from agents.behavior import DIMENSION_NAMES
     from agents.personality import personality_from_persona
     from agents.behavior import init_from_persona as _init_latent
 
@@ -146,16 +146,53 @@ def multimodality_score(personas: List[Persona]) -> float:
         vectors.append(latent.to_vector())
     X = np.vstack(vectors)
 
-    n_segments = len(set(
-        getattr(p.meta, "population_segment", "x") for p in personas
-    ))
-    k = max(2, min(n_segments, 6))
+    n_segments = len(set(getattr(p.meta, "population_segment", "x") for p in personas))
+    k_max = max(2, min(n_segments, 6))
+    covariance_types = ("diag", "tied", "spherical", "full")
 
-    gmm_1 = GaussianMixture(n_components=1, random_state=42).fit(X)
-    gmm_k = GaussianMixture(n_components=k, random_state=42).fit(X)
+    best_single_bic = np.inf
+    best_multi_bic = np.inf
+    best_multi_labels = None
 
-    bic_ratio = gmm_1.bic(X) / max(gmm_k.bic(X), 1.0)
-    return float(np.clip((bic_ratio - 1.0) / 0.3, 0.0, 1.0))
+    for cov in covariance_types:
+        try:
+            gmm_1 = GaussianMixture(n_components=1, covariance_type=cov, random_state=42).fit(X)
+            bic_1 = float(gmm_1.bic(X))
+            best_single_bic = min(best_single_bic, bic_1)
+        except Exception:
+            continue
+
+        for k in range(2, k_max + 1):
+            try:
+                gmm_k = GaussianMixture(n_components=k, covariance_type=cov, random_state=42).fit(X)
+                bic_k = float(gmm_k.bic(X))
+                if bic_k < best_multi_bic:
+                    best_multi_bic = bic_k
+                    best_multi_labels = gmm_k.predict(X)
+            except Exception:
+                continue
+
+    if not np.isfinite(best_single_bic) or not np.isfinite(best_multi_bic):
+        return 0.0
+
+    # Lower BIC is better; positive delta indicates multimodal model evidence.
+    bic_delta = best_single_bic - best_multi_bic
+    if bic_delta <= 0:
+        return 0.0
+
+    # Normalize by single-model scale to avoid sign/ratio pathologies.
+    scale = max(abs(best_single_bic), 1.0)
+    bic_score = float(np.clip(bic_delta / (0.08 * scale), 0.0, 1.0))
+
+    if best_multi_labels is None or len(set(best_multi_labels.tolist())) < 2:
+        return bic_score
+    try:
+        sil = float(silhouette_score(X, best_multi_labels))
+        sil_score = float(np.clip((sil + 1.0) / 2.0, 0.0, 1.0))
+    except Exception:
+        sil_score = 0.5
+
+    return float(np.clip(0.75 * bic_score + 0.25 * sil_score, 0.0, 1.0))
 
 
 def validate_population(

@@ -19,12 +19,15 @@ Layer 4 — Response Texture:  Injects "messy human" patterns — vague answers,
 
 from __future__ import annotations
 
+import hashlib
 import random
+import re as _re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import numpy as np
+from core.rng import ensure_np_rng, ensure_py_rng
 
 if TYPE_CHECKING:
     from population.personas import Persona
@@ -246,7 +249,7 @@ def assign_conviction_profile(
     rng: Optional[np.random.Generator] = None,
 ) -> ConvictionProfile:
     """Assign a conviction profile based on archetype and personality noise."""
-    gen = rng or np.random.default_rng()
+    gen = ensure_np_rng(rng, key=f"conviction_assign:{persona.agent_id}")
     archetype = getattr(persona.personal_anchors, "archetype", "default")
     weights = _CONVICTION_BY_ARCHETYPE.get(archetype, _CONVICTION_BY_ARCHETYPE["default"])
     profiles = list(weights.keys())
@@ -265,7 +268,7 @@ def apply_conviction_shaping(
     This is the key mechanism for producing extreme/bimodal/peaky distributions
     that real humans exhibit, instead of uniformly smooth softmax outputs.
     """
-    gen = rng or np.random.default_rng()
+    gen = ensure_np_rng(rng, key=f"conviction_shape:{profile.value}")
     arr = np.array(probs, dtype=np.float64)
     n = len(arr)
     if n < 2:
@@ -435,7 +438,7 @@ def suggest_plausible_resampling(
     if warning is None:
         return dist, sampled_option
 
-    gen = rng if rng is not None else np.random.default_rng()
+    gen = ensure_np_rng(rng, key=f"plausible_resample:{persona.agent_id}")
 
     corrected = dict(dist)
     corrected[sampled_option] *= 0.15
@@ -480,7 +483,7 @@ VAGUE_ANSWER_PROBABILITY = 0.30
 
 def should_use_vague_answer(rng: Optional[random.Random] = None) -> bool:
     """Decide whether this agent should give a terse/vague answer."""
-    r = rng or random.Random()
+    r = ensure_py_rng(rng, key="realism_vague_gate")
     return r.random() < VAGUE_ANSWER_PROBABILITY
 
 
@@ -489,7 +492,7 @@ def pick_vague_answer(
     rng: Optional[random.Random] = None,
 ) -> Optional[str]:
     """Return a short, messy human answer for the given option."""
-    r = rng or random.Random()
+    r = ensure_py_rng(rng, key=f"realism_pick_vague:{sampled_option}")
     pool = _get_vague_answers().get(sampled_option)
     if not pool:
         return None
@@ -503,30 +506,375 @@ HEDGING_PHRASES: List[str] = [
     "Honestly ", "Idk, ", "Umm ",
 ]
 
-HEDGING_PROBABILITY = 0.12
+HEDGING_PROBABILITY = 0.20
+
+_HEDGE_FILLER_SUBSTR = ("i mean", "honestly", "like,", "i guess", "basically", "umm", "uh,")
+
+
+def hedging_phrases_for_profile(profile: Optional["NarrativeStyleProfile"]) -> List[str]:
+    """Subset of hedges by voice register / grammar (analytical & blunt → fewer fillers)."""
+    if profile is None:
+        return list(HEDGING_PHRASES)
+    reg = str(getattr(profile, "voice_register", "conversational") or "conversational")
+    gq = float(getattr(profile, "grammar_quality", 0.5) or 0.5)
+    tone = str(getattr(profile, "preferred_tone", "") or "").lower()
+    pool = list(HEDGING_PHRASES)
+    if reg in ("analytical", "blunt") or gq >= 0.72 or tone in ("matter_of_fact", "blunt"):
+        pool = [
+            h for h in pool
+            if not any(s in h.lower() for s in _HEDGE_FILLER_SUBSTR)
+        ]
+    if not pool:
+        return []
+    return pool
 
 
 def maybe_add_hedging(
     text: str,
     rng: Optional[random.Random] = None,
+    *,
+    hedge_probability: Optional[float] = None,
+    profile: Optional["NarrativeStyleProfile"] = None,
 ) -> str:
     """Occasionally prepend a hedging phrase for realism."""
-    r = rng or random.Random()
-    if r.random() < HEDGING_PROBABILITY:
-        hedge = r.choice(HEDGING_PHRASES)
-        # Don't double-hedge
-        if not text.lower().startswith(tuple(h.lower().strip() for h in HEDGING_PHRASES)):
+    r = ensure_py_rng(rng, key="realism_add_hedging")
+    p = float(HEDGING_PROBABILITY if hedge_probability is None else hedge_probability)
+    p = max(0.0, min(1.0, p))
+    pool = hedging_phrases_for_profile(profile)
+    if profile is not None and str(getattr(profile, "voice_register", "")) in ("analytical", "blunt"):
+        p *= 0.55
+    if not pool:
+        return text
+    if r.random() < p:
+        hedge = r.choice(pool)
+        prefixes = tuple(h.lower().strip() for h in pool)
+        if not text.lower().startswith(prefixes):
+            if _hedge_core_in_text_prefix(hedge, text):
+                return text
             return hedge + text[0].lower() + text[1:]
     return text
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Layer 4b — Thinking-Aloud Markers (Mid-Sentence Fillers)
+# ═══════════════════════════════════════════════════════════════════════════
+
+THINKING_MARKERS = [
+    "like", "I mean", "you know", "I feel like",
+    "basically", "I guess", "sort of", "kind of",
+    "honestly", "actually", "it's like", "I think",
+    "wait no", "well", "means", "right",
+]
+
+THINKING_MARKER_PROBABILITY = 0.35
+
+_MARKER_CRUTCH_LOWER = frozenset(
+    {"like", "i mean", "you know", "i guess", "kind of", "sort of", "honestly", "it's like"}
+)
+
+_CLAUSE_BOUNDARY = _re.compile(r'(?<=,)\s+|(?<=\band\b)\s+|(?<=\bbut\b)\s+|(?<=\bso\b)\s+')
+
+
+def _remainder_prefix_matches_marker(marker: str, remainder: str) -> bool:
+    """True if text after a clause boundary already starts with the same token(s) as marker."""
+    rem = remainder.lstrip(", ").strip()
+    if not rem:
+        return False
+    m_tokens = marker.lower().split()
+    r_tokens = rem.lower().split()
+    if not m_tokens or not r_tokens:
+        return False
+    n = min(len(m_tokens), len(r_tokens))
+    for i in range(n):
+        rw = r_tokens[i].strip(".,!?;:\"'")
+        mw = m_tokens[i].strip(".,!?;:\"'")
+        if rw != mw:
+            return False
+    return True
+
+
+def _hedge_core_in_text_prefix(hedge: str, text: str, *, prefix_chars: int = 120) -> bool:
+    """Detect if the chosen prepend hedge is already echoed near the start of the answer."""
+    h = (hedge or "").strip().lower()
+    chunk = (text or "").lower()[:prefix_chars]
+    # Strip trailing comma from hedge phrase for substring checks
+    h_clean = h.rstrip(",").strip()
+    needles = []
+    if "basically" in h_clean:
+        needles.append("basically")
+    if h_clean.startswith("like") or "like," in h:
+        needles.append("like")
+    if "honestly" in h_clean:
+        needles.append("honestly")
+    if "i mean" in h_clean:
+        needles.append("i mean")
+    if "i guess" in h_clean:
+        needles.append("i guess")
+    if "well" in h_clean and h_clean.startswith("well"):
+        needles.append("well,")
+        needles.append("well ")
+    if not needles:
+        if len(h_clean) >= 3:
+            needles.append(h_clean.split()[0] if h_clean.split() else h_clean)
+    return any(n in chunk for n in needles if n)
+
+
+_ECHO_NEUTRAL_SUFFIXES = [
+    ", same thing really.",
+    ", that's what I mean.",
+    ", pretty much.",
+    ", you get the idea.",
+]
+
+
+def thinking_markers_for_profile(profile: "NarrativeStyleProfile") -> List[str]:
+    reg = str(getattr(profile, "voice_register", "conversational") or "conversational")
+    gq = float(getattr(profile, "grammar_quality", 0.5) or 0.5)
+    tone = str(getattr(profile, "preferred_tone", "") or "").lower()
+    markers = list(THINKING_MARKERS)
+    if reg in ("analytical", "blunt") or gq >= 0.74 or tone in ("matter_of_fact", "blunt"):
+        markers = [m for m in markers if m.lower() not in _MARKER_CRUTCH_LOWER]
+    if not markers:
+        return ["actually", "well", "I think"]
+    return markers
+
+
+def inject_thinking_markers(
+    text: str,
+    profile: "NarrativeStyleProfile",
+    rng: Optional[random.Random] = None,
+    *,
+    marker_probability: Optional[float] = None,
+) -> str:
+    """Insert thinking-aloud markers mid-sentence at clause boundaries.
+
+    Profile-aware: high slang / low grammar agents get more markers.
+    """
+    if len(text) < 20:
+        return text
+
+    r = ensure_py_rng(rng, key="realism_thinking_markers")
+    markers_pool = thinking_markers_for_profile(profile)
+
+    if marker_probability is not None:
+        prob = max(0.0, min(1.0, float(marker_probability)))
+    else:
+        prob = float(THINKING_MARKER_PROBABILITY)
+        if profile.slang_level > 0.50:
+            prob += 0.12
+        if profile.grammar_quality < 0.40:
+            prob += 0.10
+        elif profile.grammar_quality > 0.75:
+            prob -= 0.15
+        prob = max(0.0, min(prob, 0.60))
+
+    reg = str(getattr(profile, "voice_register", "") or "")
+    if reg in ("analytical", "blunt"):
+        prob *= 0.52
+
+    if r.random() >= prob:
+        return text
+
+    lower_text = text.lower()
+    if any(m in lower_text for m in markers_pool):
+        return text
+
+    boundaries = list(_CLAUSE_BOUNDARY.finditer(text))
+    if boundaries:
+        for _ in range(3):
+            point = r.choice(boundaries)
+            marker = r.choice(markers_pool)
+            pos = point.start()
+            rest = text[pos:]
+            if _remainder_prefix_matches_marker(marker, rest):
+                continue
+            return text[:pos] + f", {marker}, " + rest.lstrip(", ")
+        return text
+
+    words = text.split()
+    if len(words) > 4:
+        insert_at = r.randint(2, min(len(words) - 2, 6))
+        marker = r.choice(markers_pool)
+        m_first = marker.split()[0].lower().strip(".,!?;:\"'")
+        if words[insert_at].lower().strip(".,!?;:\"'") == m_first:
+            return text
+        words.insert(insert_at, f"{marker},")
+        return " ".join(words)
+
+    return text
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Layer 4c — Natural Redundancy Injection
+# ═══════════════════════════════════════════════════════════════════════════
+
+REDUNDANCY_PROBABILITY = 0.18
+
+_RESTATE_SUFFIXES = [
+    " so yeah.", " that's what I mean.", " yeah basically.",
+    " you know what I mean.", " that's pretty much it.",
+    " yeah that's about it.", " so yeah that's the thing.",
+]
+
+_SELF_AFFIRM_INSERTS = [
+    "like I said, ", "genuinely, ", "for real, ", "no but seriously, ",
+]
+
+
+def maybe_add_redundancy(
+    text: str,
+    rng: Optional[random.Random] = None,
+    *,
+    redundancy_probability: Optional[float] = None,
+) -> str:
+    """Occasionally repeat or rephrase a key phrase, mimicking human reinforcement."""
+    if len(text) < 25:
+        return text
+
+    r = ensure_py_rng(rng, key="realism_redundancy")
+    p_apply = float(REDUNDANCY_PROBABILITY if redundancy_probability is None else redundancy_probability)
+    p_apply = max(0.0, min(1.0, p_apply))
+    if r.random() >= p_apply:
+        return text
+
+    strategy = r.choice(["echo", "restate", "self_affirm"])
+
+    if strategy == "echo":
+        sentences = _re.split(r'[.!?]+', text)
+        sentences = [s.strip() for s in sentences if s.strip()]
+        if sentences:
+            last = sentences[-1]
+            words = last.split()
+            if len(words) < 3:
+                return text
+            nfrag = min(4, len(words))
+            fragment = " ".join(words[-nfrag:])
+            fl = fragment.lower()
+            first_tok = fl.split()[0] if fl.split() else ""
+            if fl.startswith("like ") or first_tok == "like":
+                return text.rstrip(".!? ") + r.choice(_ECHO_NEUTRAL_SUFFIXES)
+            base_lower = text.rstrip(".!? ").lower()
+            if base_lower.endswith(fl) or base_lower.endswith(fl.rstrip(".")):
+                return text.rstrip(".!? ") + r.choice(_ECHO_NEUTRAL_SUFFIXES)
+            if len(words) < 6 and nfrag >= len(words) - 1:
+                return text.rstrip(".!? ") + r.choice(_ECHO_NEUTRAL_SUFFIXES)
+            return text.rstrip(".!? ") + f", like {fl}."
+
+    elif strategy == "restate":
+        suffix = r.choice(_RESTATE_SUFFIXES)
+        return text.rstrip(".!? ") + suffix
+
+    elif strategy == "self_affirm":
+        sentences = _re.split(r'(?<=[.!?])\s+', text, maxsplit=1)
+        if len(sentences) >= 2:
+            insert = r.choice(_SELF_AFFIRM_INSERTS)
+            return sentences[0] + " " + insert + sentences[1][0].lower() + sentences[1][1:]
+        return text
+
+    return text
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Layer 4d — Controlled Micro-Contradiction
+# ═══════════════════════════════════════════════════════════════════════════
+
+MICRO_CONTRADICTION_PROBABILITY = 0.12
+
+_MILD_QUALIFIERS = [
+    "...but sometimes I wonder.",
+    "...though honestly some days it's different.",
+    "...well, not always I guess.",
+    "...but then again, who knows.",
+    "...I mean, depends on the day really.",
+    "...although sometimes I feel the opposite.",
+    "...but yeah, it changes.",
+    "...then again, maybe not always.",
+    "...though it shifts week to week.",
+    "...but that's not the whole story.",
+    "...still, it depends on the month.",
+    "...although I go back and forth on it.",
+    "...part of me thinks otherwise though.",
+    "...but I'm not totally consistent about it.",
+    "...some weeks it feels different honestly.",
+    "...though other times I'm less sure.",
+    "...but I could see it the other way too.",
+    "...still, I'm torn sometimes.",
+    "...though in practice it varies.",
+    "...but my mood changes the answer a bit.",
+    "...although lately I've been less certain.",
+    "...then again circumstances keep shifting.",
+    "...but it's messy in real life.",
+    "...though I half-change my mind later.",
+    "...but ask me tomorrow and it might flip.",
+    "...although I don't feel the same every day.",
+    "...still, hard to pin down exactly.",
+    "...but I'm not rigid about it.",
+    "...though I waffle more than I'd admit.",
+    "...but reality keeps contradicting me.",
+    "...although I second-guess myself often.",
+]
+
+
+def _persona_skips_micro_contradiction(persona: Any) -> bool:
+    """Direct 50+ cohorts: avoid stamping millennial-style contradiction tails."""
+    if persona is None:
+        return False
+    ns = getattr(persona, "personal_anchors", None)
+    habit = getattr(getattr(ns, "narrative_style", None), "rhetorical_habit", "direct") or "direct"
+    rh = str(habit).strip().lower()
+    if rh in {"rambling", "storytelling", "verbose", "narrative", "emotional_lead"}:
+        return False
+    age_s = str(getattr(persona, "age", "") or "")
+    m = _re.search(r"\b(\d{2})\b", age_s)
+    if m and int(m.group(1)) >= 50:
+        return True
+    return False
+
+
+def _micro_contradiction_rng(agent_id: str, text: str) -> random.Random:
+    from config.settings import get_settings
+
+    seed = int(get_settings().master_seed)
+    digest = hashlib.sha256(f"micro:{seed}:{agent_id}:{text[:400]}".encode()).digest()
+    return random.Random(int.from_bytes(digest[:8], "big", signed=False))
+
+
+def maybe_add_micro_contradiction(
+    text: str,
+    confidence_band: str = "medium",
+    rng: Optional[random.Random] = None,
+    *,
+    contradiction_probability: Optional[float] = None,
+    agent_id: str = "",
+    persona: Any = None,
+) -> str:
+    """Add mild self-contradiction for medium-confidence responses only.
+
+    Never applied to high confidence or very short responses.
+    """
+    if confidence_band != "medium" or len(text) < 30:
+        return text
+    if _persona_skips_micro_contradiction(persona):
+        return text
+
+    aid = (agent_id or "").strip() or "agent"
+    r = _micro_contradiction_rng(aid, text)
+    p_apply = float(
+        MICRO_CONTRADICTION_PROBABILITY if contradiction_probability is None else contradiction_probability
+    )
+    p_apply = max(0.0, min(1.0, p_apply))
+    if r.random() >= p_apply:
+        return text
+
+    qualifier = r.choice(_MILD_QUALIFIERS)
+    return text.rstrip(".!? ") + qualifier
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Layer 5 — Fragment Transform (Post-LLM Truncation)
 # ═══════════════════════════════════════════════════════════════════════════
 
-import re as _re
-
-_FRAGMENT_BASE_PROB = 0.25
+_FRAGMENT_BASE_PROB = 0.32
 
 _TRAILING_FILLERS = [
     " honestly", " tbh", " lol", " idk", " haha",
@@ -534,13 +882,70 @@ _TRAILING_FILLERS = [
 ]
 
 _SENTENCE_END = _re.compile(r'[.!?]')
-_CLAUSE_BREAK = _re.compile(r'[,\-–—]')
+# Commas or spaced dashes only — do not split inside hyphenated words (e.g. bulk-buying).
+_CLAUSE_BREAK = _re.compile(r",|\s[-–—]\s")
+_FRAG_MIN_WORDS = 5
+_FRAG_BAD_ENDINGS = (
+    " start bulk",
+    " start ",
+    " the ",
+    " a ",
+    " an ",
+    " and",
+    " but",
+    " or",
+    " bulk",
+)
+# Trailing vague clause — fragmentizer should not end here; post-guard may trim.
+_FRAG_WEAK_TERMINAL_SUFFIXES = (
+    "wonder.",
+    "guess.",
+    "maybe.",
+    "who knows.",
+    "i wonder.",
+    "i guess.",
+    "not sure.",
+)
+_FRAGMENT_DANGLING_TAIL = _re.compile(
+    r"\b(and|but|or|so|because|which)\s*$",
+    _re.IGNORECASE,
+)
+
+
+def _fragment_looks_dangling(t: str) -> bool:
+    s = (t or "").strip().rstrip(".!?,;:")
+    if len(s) < 4:
+        return False
+    return bool(_FRAGMENT_DANGLING_TAIL.search(s))
+
+
+def _fragment_candidate_acceptable(text: str) -> bool:
+    """Reject mid-clause chops and too-short fragments after truncation."""
+    s = (text or "").strip()
+    if len(s) < 14:
+        return False
+    if not s.endswith((".", "!", "?")):
+        return False
+    words = s.split()
+    if len(words) < _FRAG_MIN_WORDS:
+        return False
+    low = s.lower().rstrip(".!?")
+    for bad in _FRAG_BAD_ENDINGS:
+        if low.endswith(bad.strip()):
+            return False
+    low_full = s.lower().strip()
+    for weak in _FRAG_WEAK_TERMINAL_SUFFIXES:
+        if low_full.endswith(weak):
+            return False
+    return True
 
 
 def maybe_fragmentize(
     text: str,
     profile: "NarrativeStyleProfile",
     rng: Optional[random.Random] = None,
+    *,
+    fragment_probability: Optional[float] = None,
 ) -> str:
     """Occasionally truncate LLM output into a casual fragment.
 
@@ -549,60 +954,92 @@ def maybe_fragmentize(
     """
     if len(text) < 30:
         return text
+    if _fragment_looks_dangling(text):
+        return text
 
-    r = rng or random.Random()
+    original = text
+    r = ensure_py_rng(rng, key="realism_fragmentize")
 
-    prob = _FRAGMENT_BASE_PROB
-    if profile.grammar_quality < 0.40:
-        prob += 0.15
-    elif profile.grammar_quality > 0.75:
-        prob -= 0.12
-    if profile.slang_level > 0.50:
-        prob += 0.10
-
-    prob = max(0.0, min(prob, 0.60))
+    if fragment_probability is not None:
+        prob = max(0.0, min(1.0, float(fragment_probability)))
+    else:
+        prob = float(_FRAGMENT_BASE_PROB)
+        if profile.grammar_quality < 0.40:
+            prob += 0.15
+        elif profile.grammar_quality > 0.75:
+            prob -= 0.12
+        if profile.slang_level > 0.50:
+            prob += 0.10
+        prob = max(0.0, min(prob, 0.60))
 
     if r.random() >= prob:
         return text
 
     strategy = r.choice(["first_sentence", "first_clause", "lowercase_strip", "filler"])
+    candidate = text
 
     if strategy == "first_sentence":
         m = _SENTENCE_END.search(text, 8)
         if m:
             fragment = text[: m.start()].strip()
             if len(fragment) >= 8:
-                return fragment
+                candidate = fragment
 
     elif strategy == "first_clause":
         m = _CLAUSE_BREAK.search(text, 8)
         if m:
             fragment = text[: m.start()].strip()
             if len(fragment) >= 8:
-                return fragment
+                candidate = fragment
 
     elif strategy == "lowercase_strip":
         m = _SENTENCE_END.search(text, 8)
         fragment = text[: m.start()].strip() if m else text.strip()
         fragment = fragment.rstrip(".!?,;:-–—")
         if fragment:
-            return fragment[0].lower() + fragment[1:]
+            candidate = fragment[0].lower() + fragment[1:]
 
     elif strategy == "filler":
         m = _SENTENCE_END.search(text, 8)
         fragment = text[: m.start()].strip() if m else text.strip()
         fragment = fragment.rstrip(".!?,;:-–—")
         if fragment:
-            return fragment + r.choice(_TRAILING_FILLERS)
+            candidate = fragment + r.choice(_TRAILING_FILLERS)
 
-    return text
+    if candidate != original and _fragment_looks_dangling(candidate):
+        return original
+    if candidate != original and not _fragment_candidate_acceptable(candidate):
+        return original
+    return candidate
+
+
+_WEAK_TERMINAL_SUFFIXES = _FRAG_WEAK_TERMINAL_SUFFIXES
+
+
+def trim_weak_terminal_suffix(text: str, *, min_words_remain: int = 8) -> str:
+    """Drop a final sentence that ends on a vague hedge when enough text remains."""
+    s = (text or "").strip()
+    if not s:
+        return s
+    low = s.lower().strip()
+    if not any(low.endswith(w) for w in _WEAK_TERMINAL_SUFFIXES):
+        return s
+    parts = _re.split(r"(?<=[.!?])\s+", s)
+    if len(parts) < 2:
+        return s
+    merged = " ".join(parts[:-1]).strip()
+    if len(merged.split()) < min_words_remain:
+        return s
+    if merged and merged[-1] not in ".!?":
+        merged = merged.rstrip(",;:-–—") + "."
+    return merged
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Layer 6 — Polish Degradation (Strip LLM-ish Phrasing)
 # ═══════════════════════════════════════════════════════════════════════════
 
-_POLISH_PROB = 0.30
+_POLISH_PROB = 0.45
 
 _POLISH_REPLACEMENTS: List[tuple] = [
     (_re.compile(r"\bI find myself\b", _re.I), ""),
@@ -620,12 +1057,33 @@ _POLISH_REPLACEMENTS: List[tuple] = [
     (_re.compile(r"\bI tend to\b", _re.I), "I"),
     (_re.compile(r"\bI'd have to say\b", _re.I), ""),
     (_re.compile(r"\bI have to say\b", _re.I), ""),
+    (_re.compile(r"\bAdditionally\b", _re.I), "Also"),
+    (_re.compile(r"\bFurthermore\b", _re.I), "And"),
+    (_re.compile(r"\bHowever\b", _re.I), "But"),
+    (_re.compile(r"\bTherefore\b", _re.I), "So"),
+    (_re.compile(r"\bConsequently\b", _re.I), "So"),
+    (_re.compile(r"\bNevertheless\b", _re.I), "Still"),
+    (_re.compile(r"\bIn addition\b", _re.I), "Plus"),
+    (_re.compile(r"\bFor instance\b", _re.I), "Like"),
+    (_re.compile(r"\bIt is worth noting\b", _re.I), ""),
+    (_re.compile(r"\bI appreciate\b", _re.I), "I like"),
+    (_re.compile(r"\bI utilize\b", _re.I), "I use"),
+    (_re.compile(r"\bpurchase\b", _re.I), "buy"),
+    (_re.compile(r"\bresidence\b", _re.I), "place"),
+    (_re.compile(r"\bconsider\b", _re.I), "think about"),
+    (_re.compile(r"\bAlthough\b", _re.I), "Even though"),
+    (_re.compile(r"\bregarding\b", _re.I), "about"),
+    (_re.compile(r"\bprimarily\b", _re.I), "mostly"),
+    (_re.compile(r"\bsignificantly\b", _re.I), "a lot"),
+    (_re.compile(r"\bcurrently\b", _re.I), "right now"),
 ]
 
 
 def degrade_polish(
     text: str,
     rng: Optional[random.Random] = None,
+    *,
+    polish_apply_probability: Optional[float] = None,
 ) -> str:
     """Occasionally strip LLM-polished phrasing to sound more human.
 
@@ -635,8 +1093,10 @@ def degrade_polish(
     if len(text) < 15:
         return text
 
-    r = rng or random.Random()
-    if r.random() >= _POLISH_PROB:
+    r = ensure_py_rng(rng, key="realism_degrade_polish")
+    p_apply = float(_POLISH_PROB if polish_apply_probability is None else polish_apply_probability)
+    p_apply = max(0.0, min(1.0, p_apply))
+    if r.random() >= p_apply:
         return text
 
     for pattern, replacement in _POLISH_REPLACEMENTS:

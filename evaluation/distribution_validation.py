@@ -10,6 +10,7 @@ from scipy.spatial.distance import jensenshannon
 from scipy.stats import chisquare
 
 
+from config.option_space import canonicalize_observed_and_reference
 from config.reference_distributions import REFERENCE_DISTRIBUTIONS, get_reference_distribution
 
 DEFAULT_REFERENCE: Dict[str, float] = get_reference_distribution("generic_frequency")
@@ -37,12 +38,19 @@ def compare_to_reference(
     observed: Dict[str, float],
     reference: Optional[Dict[str, float]] = None,
     significance: float = 0.05,
+    question_model_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Compare observed vs reference distribution.
 
     Returns JS divergence, chi-square p-value, per-option diffs, and pass/fail.
     """
     reference = reference or DEFAULT_REFERENCE
+    mapping_applied = False
+    if question_model_key:
+        observed, reference = canonicalize_observed_and_reference(
+            question_model_key, observed, reference,
+        )
+        mapping_applied = True
     all_keys = sorted(set(list(observed.keys()) + list(reference.keys())))
 
     obs_arr = np.array([observed.get(k, 0.0) for k in all_keys])
@@ -83,6 +91,9 @@ def compare_to_reference(
         "chi_square_significant": chi2_p < significance,
         "per_option": per_option,
         "passed": passed,
+        "reference_source": "explicit" if reference is not DEFAULT_REFERENCE else "default",
+        "mapping_applied": mapping_applied,
+        "unmapped_labels": [],
     }
 
 
@@ -97,12 +108,21 @@ def validate_survey_distribution(
     If no explicit reference is given but question_model_key is provided,
     auto-resolves from the reference distribution registry.
     """
+    reference_source = "explicit"
     if reference is None and question_model_key:
         reference = get_reference_distribution(question_model_key) or None
+        reference_source = "registry"
+    elif reference is None:
+        reference_source = "default"
     observed = aggregate_survey_distribution(responses, key=key)
-    comparison = compare_to_reference(observed, reference)
+    comparison = compare_to_reference(
+        observed,
+        reference,
+        question_model_key=question_model_key,
+    )
     comparison["observed_distribution"] = observed
     comparison["n_responses"] = len(responses)
+    comparison["reference_source"] = reference_source
     if question_model_key:
         comparison["question_model_key"] = question_model_key
     return comparison

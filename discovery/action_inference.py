@@ -8,10 +8,12 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from agents.actions import ActionTemplate
+from agents.intent_router import build_turn_understanding_hybrid, infer_action_template_rule
 
 logger = logging.getLogger(__name__)
 
@@ -67,32 +69,107 @@ def _cache_key(question: str) -> str:
 
 
 def infer_action_type_rule(question: str) -> Optional[ActionTemplate]:
-    norm = question.lower()
-    for patterns, template in _PATTERN_RULES:
-        if any(p in norm for p in patterns):
-            return template
-    return None
+    action_type, target, intensity_scale = infer_action_template_rule(question)
+    if not action_type or not target or not intensity_scale:
+        return None
+    return ActionTemplate(action_type, target, intensity_scale)
+
+
+@dataclass
+class ActionInferenceResult:
+    template: ActionTemplate
+    rule_template: Optional[Dict[str, Any]]
+    hybrid_understanding: Optional[Dict[str, Any]]
+    source: str
+    confidence: float
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "template": self.template.to_dict(),
+            "rule_template": self.rule_template,
+            "hybrid_understanding": self.hybrid_understanding,
+            "source": self.source,
+            "confidence": self.confidence,
+        }
 
 
 class ActionModelBuilder:
     """Infer action types from questions using rules + LLM fallback."""
+
+    def __init__(self) -> None:
+        self.last_result: Optional[ActionInferenceResult] = None
 
     async def infer_action_type(
         self,
         question: str,
         options: Optional[List[str]] = None,
     ) -> ActionTemplate:
+        result = await self.infer_action_type_result(question, options=options)
+        return result.template
+
+    async def infer_action_type_result(
+        self,
+        question: str,
+        options: Optional[List[str]] = None,
+    ) -> ActionInferenceResult:
         key = _cache_key(question)
         if key in _ACTION_CACHE:
-            return ActionTemplate.from_dict(_ACTION_CACHE[key])
+            cached_template = ActionTemplate.from_dict(_ACTION_CACHE[key])
+            self.last_result = ActionInferenceResult(
+                template=cached_template,
+                rule_template=None,
+                hybrid_understanding=None,
+                source="cache",
+                confidence=0.99,
+            )
+            return self.last_result
 
         rule_match = infer_action_type_rule(question)
-        if rule_match is not None:
+        rule_template = rule_match.to_dict() if rule_match is not None else None
+        hybrid_understanding = await build_turn_understanding_hybrid(question, options=options)
+        hybrid_template = ActionTemplate(
+            action_type=hybrid_understanding.action_type_candidate or "choose",
+            target=hybrid_understanding.target_candidate or "behavior",
+            intensity_scale=hybrid_understanding.intensity_scale_candidate or "ordinal",
+        )
+
+        if rule_match is not None and (
+            rule_match.action_type == hybrid_template.action_type
+            and rule_match.target == hybrid_template.target
+            and rule_match.intensity_scale == hybrid_template.intensity_scale
+        ):
             _ACTION_CACHE[key] = rule_match.to_dict()
             _save_cache(_ACTION_CACHE)
-            return rule_match
+            self.last_result = ActionInferenceResult(
+                template=rule_match,
+                rule_template=rule_template,
+                hybrid_understanding=hybrid_understanding.to_dict(),
+                source="rule_llm_agree",
+                confidence=max(hybrid_understanding.final_confidence, 0.8),
+            )
+            return self.last_result
 
-        return await self._infer_via_llm(question, options, key)
+        if hybrid_understanding.llm_confidence >= 0.8:
+            _ACTION_CACHE[key] = hybrid_template.to_dict()
+            _save_cache(_ACTION_CACHE)
+            self.last_result = ActionInferenceResult(
+                template=hybrid_template,
+                rule_template=rule_template,
+                hybrid_understanding=hybrid_understanding.to_dict(),
+                source="hybrid",
+                confidence=hybrid_understanding.final_confidence,
+            )
+            return self.last_result
+
+        template = await self._infer_via_llm(question, options, key)
+        self.last_result = ActionInferenceResult(
+            template=template,
+            rule_template=rule_template,
+            hybrid_understanding=hybrid_understanding.to_dict(),
+            source="fallback_llm",
+            confidence=max(hybrid_understanding.llm_confidence, 0.6),
+        )
+        return self.last_result
 
     async def _infer_via_llm(
         self, question: str, options: Optional[List[str]], key: str

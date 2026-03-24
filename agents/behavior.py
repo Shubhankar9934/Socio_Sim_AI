@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Dict, List, Optional
 
 import numpy as np
 
+from core.rng import stable_seed_from_key
+
 if TYPE_CHECKING:
     from agents.personality import PersonalityTraits
     from population.personas import Persona
@@ -96,8 +98,15 @@ class BehavioralLatentState:
         dimension_weights: Dict[str, float],
         answer_score: float,
         learning_rate: float = 0.05,
+        identity_anchor: Optional[List[float]] = None,
+        anchor_elasticity: float = 0.15,
     ) -> None:
-        """EMA update: nudge relevant dimensions toward the answer_score."""
+        """EMA update with identity anchor elastic pull.
+
+        After nudging dimensions toward the answer_score, applies
+        a restoring force toward the identity_anchor (if provided)
+        to prevent unbounded personality drift over long sessions.
+        """
         for dim, weight in dimension_weights.items():
             current = self.get(dim, None)
             if current is None:
@@ -105,6 +114,23 @@ class BehavioralLatentState:
             target = answer_score if weight > 0 else (1.0 - answer_score)
             delta = learning_rate * abs(weight) * (target - current)
             self.set(dim, current + delta)
+
+        if identity_anchor is not None and anchor_elasticity > 0:
+            self._apply_anchor_pull(identity_anchor, anchor_elasticity)
+
+    def _apply_anchor_pull(
+        self,
+        anchor: List[float],
+        elasticity: float,
+    ) -> None:
+        """Pull current latent state back toward the identity anchor."""
+        n = min(len(DIMENSION_NAMES), len(anchor))
+        for i in range(n):
+            dim = DIMENSION_NAMES[i]
+            current = getattr(self, dim)
+            anchor_val = anchor[i]
+            pull = elasticity * (anchor_val - current)
+            setattr(self, dim, _clamp(current + pull))
 
     def apply_social_influence(
         self,
@@ -208,7 +234,7 @@ def init_from_persona(
     segment_name = getattr(persona.meta, "population_segment", None)
     if segment_name:
         from population.segments import sample_latent_from_segment
-        rng = np.random.default_rng(hash(persona.agent_id) & 0xFFFFFFFF)
+        rng = np.random.default_rng(stable_seed_from_key(f"segment:{persona.agent_id}"))
         segment_vals = sample_latent_from_segment(segment_name, rng)
         _SEGMENT_WEIGHT = 0.70
         final = {}

@@ -1,187 +1,231 @@
 # Simulation API
 
-Source collection: **JADU_Full_API** → folder `simulation`.
+**Purpose:** Advance **global** agent state over days, schedule world events, run **isolated** scenario experiments (copies), and query a **structural causal** helper graph.
 
-**Prerequisite:** `POST /population/generate` (agents + `social_graph` in `api.state`).
+**Prerequisites:** `POST /population/generate` (non-empty [`agents_store`](../../api/state.py); `social_graph` recommended).
+
+**Postman:** folder `simulation`.
+
+**Sample I/O:** [`api_details_input_output.txt`](../../api_details_input_output.txt) — global + events + status ~5301–5348; scenario / compare / run-with-survey / compare-with-survey ~5350–7753; causal ~8373–8645. Shapes below match those captures.
+
+---
+
+## Global vs isolated vs causal
+
+| Class | Endpoints | Mutates `agents_store`? |
+|-------|-----------|-------------------------|
+| **Global** | `POST /simulation`, `POST /simulation/events` (queue only) | Yes for `/simulation` run; events queue only |
+| **Isolated** | `POST /simulation/scenario*` | **No** — [`copy.deepcopy`](../../simulation/scenario.py) of agents |
+| **Causal** | `GET/POST .../causal/*` | **No** — analytical graph operations |
 
 ---
 
 ## POST `/simulation`
 
-Runs the **main** time-stepping loop on the **live** `agents_store` (mutates global state).
+### Request (`SimulateRequest`)
 
-### Body (`SimulateRequest`)
+| Field | Type | Range | Default |
+|-------|------|-------|---------|
+| `days` | int | 1–365 | 30 |
 
-| Field | Type | Default | Range | Purpose |
-|-------|------|---------|-------|---------|
-| `days` | int | 30 | 1–365 | Number of simulation days to advance. |
+### Response field ledger
 
-### Response
+| Field | Meaning | Source |
+|-------|---------|--------|
+| `status` | Literal ok | Constant `"ok"` |
+| `days` | Echo | Request body |
+| `n_agents` | Population size | `len(agents_store)` |
 
-`{ "status": "ok", "days": <int>, "n_agents": <int> }`
+### Trace
 
-### Flow
+[`run_simulation_endpoint`](../../api/routes/simulation.py) → [`run_simulation`](../../simulation/engine.py)(`agents_store`, `days`, `social_graph`, `scheduler`).
 
-1. [api/routes/simulation.py](../../api/routes/simulation.py) → `run_simulation(agents_store, days, social_graph, scheduler)`  
-2. [simulation/engine.py](../../simulation/engine.py) — applies scheduler events, social influence, state updates per day.
+### Engine (high level)
+
+[`simulation/engine.py`](../../simulation/engine.py) implements a **per-day pipeline** (scheduled events, research/media, cognitive updates, social diffusion, macro feedback, etc.). The kernel **does not call the LLM**. See file docstring for the ordered 13-step pipeline and vectorized vs scalar paths.
+
+```mermaid
+flowchart TD
+  subgraph globalSim [POST_simulation]
+    eng[run_simulation_engine]
+    eng --> dayLoop[day_loop_scheduler_events_social_macro]
+  end
+```
 
 ---
 
 ## POST `/simulation/events`
 
-Schedules a **future** event (does not run simulation by itself).
-
-### Body (`EventInjectRequest`)
+### Request (`EventInjectRequest`)
 
 | Field | Purpose |
 |-------|---------|
-| `day` | Simulation day index when the event fires (≥ 0). |
-| `type` | e.g. `price_change`, `policy`, `infrastructure`, `market`, `new_service`, `new_metro_station`. |
-| `payload` | Type-specific parameters (e.g. `{ "service": "delivery", "change_pct": -10 }`). |
-| `district` | Optional geographic scope. |
+| `day` | Fire day (≥ 0) |
+| `type` | e.g. `price_change`, `policy`, `infrastructure`, `market`, `new_service`, `new_metro_station` |
+| `payload` | Type-specific dict |
+| `district` | Optional scope |
 
-### Response
+### Response (POST — schedule)
 
-`status`, `event_type`, `day`, `pending_events` (count).
+| Field | Meaning | Source |
+|-------|---------|--------|
+| `status` | `"scheduled"` | Constant in route |
+| `event_type` | Echo of `type` | Request body |
+| `day` | Echo | Request body |
+| `pending_events` | Count after enqueue | `len(app_state.event_scheduler._events)` |
 
-### Flow
-
-Builds [world/events.py](../../world/events.py) `SimulationEvent` → `app_state.event_scheduler.add(event)`.
-
----
-
-## GET `/simulation/events`
-
-Lists `pending_events` and `global_params` from the scheduler.
+**Trace:** Builds [`SimulationEvent`](../../world/events.py) → [`event_scheduler.add`](../../world/events.py) ([`api/routes/simulation.py`](../../api/routes/simulation.py)).
 
 ---
 
-## GET `/simulation/status`
+## GET `/simulation/events` & GET `/simulation/status`
 
-`population_size`, `social_graph_loaded`, `pending_events` count.
+| Endpoint | Key outputs | Computation |
+|----------|-------------|-------------|
+| GET `/events` | `pending_events[]` (`day`, `type`, `district`, `payload`), `global_params` | List comprehension over `event_scheduler._events`; `global_params` from scheduler object ([`api/routes/simulation.py`](../../api/routes/simulation.py)) |
+| GET `/status` | `population_size`, `social_graph_loaded`, `pending_events` | `len(agents_store)`, `social_graph is not None`, scheduler length |
 
 ---
 
 ## POST `/simulation/scenario`
 
-Runs a **copy** of the population through a scenario **without** mutating the global `agents_store`.
+**Isolated run** — does not modify live `agents_store`.
 
-### Body (`ScenarioRunRequest`)
+### Request (`ScenarioRunRequest`)
 
 | Field | Purpose |
 |-------|---------|
-| `name` | Label for the scenario. |
-| `days` | Length of run. |
-| `seed` | Optional RNG seed for the isolated run. |
-| `events` | List of timed `ScenarioEvent` objects (`day`, `type`, `payload`, `district`). |
+| `name` | Label |
+| `days` | Simulation length |
+| `seed` | Optional RNG seed via [`SimulationConfig`](../../simulation/config.py) |
+| `events` | Timed [`ScenarioEvent`](../../simulation/scenario.py) list |
 
-### Response
+### Response / metrics
 
-Includes `dimension_means` (and related aggregates from [simulation/scenario.py](../../simulation/scenario.py) `run_scenario`).
+Returned keys match [`run_scenario_endpoint`](../../api/routes/simulation.py) (subset of [`ScenarioResult`](../../simulation/scenario.py)):
 
-### Flow
+| Field | Meaning | Computation |
+|-------|---------|-------------|
+| `name` | Scenario label | Echo from request |
+| `days` | Length run | Echo from request |
+| `seed` | RNG seed | Echo from request (via scenario config) |
+| `population_size` | Agent count | `len(agents_copy)` |
+| `dimension_means` | Mean latent dimensions | [`build_trait_matrix`](../../agents/vectorized.py) + [`vectorized_macro_aggregation`](../../agents/vectorized.py) on **post-run copy** |
 
-`run_scenario(agents_store, scenario, social_graph)` — deep copy agents, simulate, return metrics.
+**Not in this response:** [`run_scenario`](../../simulation/scenario.py) also computes `belief_means` on the clone, but the route does **not** return it. Use **`POST /simulation/scenario/run-with-survey`** or **`compare-with-survey`** for `belief_means` in JSON.
+
+**Trace:** [`run_scenario`](../../simulation/scenario.py) → `copy.deepcopy(agents)` → `_build_scheduler` → [`run_simulation`](../../simulation/engine.py) (or stepped timeline if `collect_timeline`).
 
 ---
 
 ## POST `/simulation/scenario/compare`
 
-### Body (`ScenarioCompareRequest`)
+### Response highlights
 
-- `scenario_a`, `scenario_b`: same shape as single scenario.
-
-### Flow
-
-`compare_scenarios(...)` — runs both, returns `dimension_diff_b_minus_a`, `causal_attribution_b`, timelines, etc. ([simulation/scenario.py](../../simulation/scenario.py)).
+| Field | Meaning |
+|-------|---------|
+| `dimension_diff_b_minus_a` | Per dimension: `mean_b - mean_a` (rounded) |
+| `causal_attribution_b` | Partial runs: events-only vs +social vs full ([`run_scenario_with_attribution`](../../simulation/scenario.py)) |
+| `causal_counterfactual_values` | If \|diff\|>0.01, `build_default_causal_graph().do(intervention_vars, baseline_means)` |
 
 ---
 
 ## POST `/simulation/scenario/run-with-survey`
 
-### Body (`ScenarioWithSurveyRequest`)
+Runs scenario with `collect_timeline=True`, then [`run_survey`](../../simulation/orchestrator.py) per question string on the **clone**.
 
-| Field | Purpose |
-|-------|---------|
-| `scenario` | `ScenarioRunRequest` shape. |
-| `questions` | List of question strings (min 1). After scenario, each question is run as a survey on the **post-scenario** clone. |
-
-### Response
-
-Scenario summary + `belief_means`, `survey_results` (per question), `timeline`.
-
-### Flow
-
-`run_scenario_with_survey` in [simulation/scenario.py](../../simulation/scenario.py) → internal calls to survey/orchestrator pipeline per question.
+| Field | Source |
+|-------|--------|
+| `survey_results` | Map question → survey payload from orchestrator |
+| `timeline` | Periodic `_snapshot` entries: `day`, `dimension_means`, `belief_means` |
 
 ---
 
 ## POST `/simulation/scenario/compare-with-survey`
 
-### Body (`ScenarioCompareWithSurveyRequest`)
+[`compare_scenarios_with_survey`](../../simulation/scenario.py): two `run_scenario_with_survey` → `dimension_diff_b_minus_a` + per-question `distribution_a` / `distribution_b` / chi-square style `p_value` on scaled counts.
 
-`scenario_a`, `scenario_b`, `questions[]`.
+### Response field ledger (compare-with-survey)
 
-### Flow
-
-`compare_scenarios_with_survey` — two isolated runs + surveys + statistical comparison of distributions ([simulation/scenario.py](../../simulation/scenario.py)).
-
----
-
-## GET `/simulation/causal/graph`
-
-Returns default **nodes** and **edges** from the causal module (static graph structure for documentation / UI).
-
-**Implementation:** [api/routes/simulation.py](../../api/routes/simulation.py) → [causal/graph.py](../../causal/graph.py) `build_default_causal_graph()` → `g.to_dict()`.
+| Field | Meaning |
+|-------|---------|
+| `scenario_a`, `scenario_b` | Each includes `name`, `dimension_means`, `belief_means` from post-run clones |
+| `dimension_diff_b_minus_a` | Per latent dimension: \( \bar{x}_B - \bar{x}_A \) |
+| `survey_comparison[question]` | `distribution_a`, `distribution_b` (histograms over `sampled_option` or `answer`), `p_value` from chi-square on scaled counts |
+| `timeline_a`, `timeline_b` | Snapshots from each scenario’s `collect_timeline` run |
 
 ---
 
-## POST `/simulation/causal/do-intervention`
+## Causal endpoints
 
-### Body
+### GET `/simulation/causal/graph`
 
-- `intervention`: map variable → clamped value (e.g. `{ "price": 0.8 }`).
-- `observational`: optional baseline context.
+Returns [`build_default_causal_graph().to_dict()`](../../causal/graph.py).
 
-### Response
+| Key | Meaning |
+|-----|---------|
+| `nodes` | List of variable names in the default SCM |
+| `edges` | List of `{ cause, effect, weight, mechanism? }` directed edges |
 
-`counterfactual_values` — propagated latent / outcome values under the structural model.
+### POST `/simulation/causal/do-intervention`
 
-**Flow:** `build_default_causal_graph()` then `g.do(intervention, observational)` ([causal/graph.py](../../causal/graph.py)).
+| Body | Role |
+|------|------|
+| `intervention` | `do(X=x)` assignments |
+| `observational` | Optional context for non-intervened nodes |
+
+**Response:** `counterfactual_values` = [`CausalGraph.do`](../../causal/graph.py)(...).
+
+### POST `/simulation/causal/ate`
+
+**Response:** `ate` from [`estimate_ate`](../../causal/graph.py) on default graph (may be `0.0` if structure/estimator does not connect treatment→outcome).
+
+### POST `/simulation/causal/learn`
+
+**Body:** `{ "timeline": [ ... ] }` — each entry should include `dimension_means` for learning.
+
+**Behavior:** [`CausalLearner.learn_from_timeline`](../../causal/learner.py): if `not timeline` or `len(timeline) < 3`, returns **`build_default_causal_graph()`** unchanged (same `nodes`/`edges` as GET `/causal/graph` — see sample file `timeline: []` output ~8531–8645).
+
+| Response key | When learned | When short/empty timeline |
+|--------------|--------------|---------------------------|
+| `nodes`, `edges` | Learned structure from lagged correlations | **Default graph** from [`build_default_causal_graph`](../../causal/graph.py) |
+
+```mermaid
+flowchart LR
+  subgraph causalFlow [Causal_APIs]
+    G[build_default_causal_graph]
+    G --> doOp[do_intervention]
+    G --> ate[estimate_ate]
+    TL[timeline] --> learn[learn_from_timeline]
+  end
+```
 
 ---
 
-## POST `/simulation/causal/ate`
+## Diagram — scenario isolation
 
-### Body
+```mermaid
+sequenceDiagram
+  participant API as simulation_route
+  participant RS as run_scenario
+  participant CP as deepcopy_agents
+  participant EN as engine_run_simulation
 
-`treatment`, `outcome`, `confounders[]`, `treatment_value`, `control_value`.
-
-### Response
-
-`{ "treatment", "outcome", "ate" }` — from `g.estimate_ate(...)` on the default graph (may be `0.0` if the outcome variable is not connected / implemented in that estimator).
-
----
-
-## POST `/simulation/causal/learn`
-
-### Body
-
-`timeline` — array of observations for structure learning.
-
-### Response
-
-Learned `nodes` / `edges` (or default graph if timeline empty — see your sample).
-
-**Flow:** [causal/learner.py](../../causal/learner.py) `CausalLearner.learn_from_timeline(timeline)` → `g.to_dict()`.
+  API->>RS: run_scenario
+  RS->>CP: copy_agents
+  RS->>EN: mutate_copy_only
+  RS-->>API: ScenarioResult_metrics
+```
 
 ---
 
-## Summary: global vs isolated simulation
+## Configuration
 
-| Endpoint | Mutates `agents_store`? |
-|----------|-------------------------|
-| `POST /simulation` | **Yes** |
-| `POST /simulation/events` | No (queues only) |
-| `POST /simulation/scenario*` | **No** (uses copies) |
-| Causal POSTs | Typically **No** (analytical / counterfactual) |
+- [`SimulationConfig`](../../simulation/config.py) `master_seed` from scenario `seed`
+- Engine thresholds: `VECTORIZE_THRESHOLD` in [`simulation/engine.py`](../../simulation/engine.py)
+
+---
+
+## Cross-links
+
+- [`docs/modules/simulation.md`](../modules/simulation.md), [`docs/modules/causal.md`](../modules/causal.md), [`docs/modules/world.md`](../modules/world.md)

@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from agents.belief_network import BELIEF_DIMENSIONS, _N_BELIEFS
+from core.rng import stable_seed_from_key
 from media.framing import MediaFrame
 
 
@@ -71,7 +72,7 @@ class StrategicActor:
     ) -> List[MediaFrame]:
         """Generate targeted frames based on population state."""
         frames = []
-        rng = np.random.default_rng(day * hash(self.name) % (2**31))
+        rng = np.random.default_rng(stable_seed_from_key(f"strategic:{self.name}:{day}"))
 
         for _ in range(self.budget_per_day):
             bias_vec = np.full(_N_BELIEFS, 0.5)

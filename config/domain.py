@@ -50,6 +50,7 @@ class DomainConfig:
     family_modifiers: Dict[str, Dict[str, float]] = field(default_factory=dict)
     income_modifiers: Dict[str, Dict[str, float]] = field(default_factory=dict)
     implausible_combos: List[Dict[str, Any]] = field(default_factory=list)
+    factor_couplings: List[Dict[str, Any]] = field(default_factory=list)
     answer_habit_scores: Dict[str, float] = field(default_factory=dict)
     vague_answers: Dict[str, List[str]] = field(default_factory=dict)
 
@@ -122,6 +123,7 @@ def load_domain_config(domain_id: str = "dubai") -> DomainConfig:
         family_modifiers=domain_data.get("family_modifiers", {}),
         income_modifiers=domain_data.get("income_modifiers", {}),
         implausible_combos=domain_data.get("implausible_combos", []),
+        factor_couplings=domain_data.get("factor_couplings", []),
         answer_habit_scores=domain_data.get("answer_habit_scores", {}),
         vague_answers=domain_data.get("vague_answers", {}),
         system_prompts=domain_data.get("system_prompts", []),

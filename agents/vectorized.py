@@ -14,6 +14,7 @@ import numpy as np
 
 from agents.behavior import DIMENSION_NAMES, BehavioralLatentState, _N_DIMS
 from agents.belief_network import BELIEF_DIMENSIONS, BeliefNetwork, _N_BELIEFS
+from core.rng import ensure_np_rng
 
 
 def build_trait_matrix(agents: List[Dict[str, Any]]) -> np.ndarray:
@@ -47,8 +48,14 @@ def vectorized_decide(
     weight_vector: np.ndarray,
     n_options: int,
     temperature: float = 1.0,
+    belief_matrix: np.ndarray | None = None,
+    belief_weight_vector: np.ndarray | None = None,
+    habit_matrix: np.ndarray | None = None,
+    cultural_prior: np.ndarray | None = None,
+    rng: np.random.Generator | None = None,
 ) -> np.ndarray:
-    """Batch softmax decision for N agents.
+    """Batch softmax decision for N agents with conviction shaping, habit bias,
+    cultural prior, and anti-collapse.
 
     Parameters
     ----------
@@ -56,21 +63,64 @@ def vectorized_decide(
     weight_vector : (12,) weights for dimensions relevant to the question
     n_options : number of answer options
     temperature : softmax temperature
+    belief_matrix : optional (N, 7) belief dimensions
+    belief_weight_vector : optional (7,) belief weights for the question
+    habit_matrix : optional (N, 5) habit profile values
+    cultural_prior : optional (n_options,) prior from domain config
+    rng : numpy random generator
 
     Returns
     -------
     distributions : (N, n_options) probability matrix
     """
-    scores = trait_matrix @ weight_vector  # (N,) behavioral scores in [0,1]-ish
+    rng = ensure_np_rng(rng, key="vectorized_decide")
+    N = trait_matrix.shape[0]
+    scores = trait_matrix @ weight_vector
     scores = np.clip(scores, 0.0, 1.0)
+
+    # Fold in belief dimensions when available
+    if belief_matrix is not None and belief_weight_vector is not None:
+        belief_scores = belief_matrix @ belief_weight_vector
+        belief_scores = np.clip(belief_scores, 0.0, 1.0)
+        scores = 0.7 * scores + 0.3 * belief_scores
 
     option_indices = np.arange(1, n_options + 1, dtype=np.float64)
     raw = np.outer(scores, option_indices / n_options) + np.outer(1.0 - scores, option_indices[::-1] / n_options)
+
+    # Habit bias: agents with strong primary-service tendency get sharpened distributions
+    if habit_matrix is not None and habit_matrix.shape[0] == N:
+        habit_strength = habit_matrix[:, 0]  # primary_service_tendency
+        sharpening = 1.0 + 0.5 * habit_strength
+        raw = raw * sharpening.reshape(-1, 1)
+
+    # Cultural prior blend
+    if cultural_prior is not None and cultural_prior.shape[0] == n_options:
+        cultural = cultural_prior / (cultural_prior.sum() + 1e-12)
+        raw = raw + 0.15 * np.log(cultural + 1e-12)
+
+    # Conviction shaping: push strong scores further from center
+    deviation = scores - 0.5
+    conviction = np.abs(deviation)
+    conviction_multiplier = 1.0 + 0.4 * conviction
+    raw = raw * conviction_multiplier.reshape(-1, 1)
 
     raw = raw / temperature
     raw -= raw.max(axis=1, keepdims=True)
     exp = np.exp(raw)
     distributions = exp / exp.sum(axis=1, keepdims=True)
+
+    # Anti-collapse: if any option has <2% probability, inject minimum floor
+    floor = 0.02
+    below_floor = distributions < floor
+    if below_floor.any():
+        distributions = np.maximum(distributions, floor)
+        distributions = distributions / distributions.sum(axis=1, keepdims=True)
+
+    # Small per-agent noise for stochastic realism
+    noise = rng.normal(0.0, 0.01, distributions.shape)
+    distributions = np.clip(distributions + noise, 0.0, 1.0)
+    distributions = distributions / distributions.sum(axis=1, keepdims=True)
+
     return distributions
 
 
@@ -79,8 +129,7 @@ def vectorized_sample(distributions: np.ndarray, rng: Optional[np.random.Generat
 
     Returns (N,) array of sampled option indices (0-based).
     """
-    if rng is None:
-        rng = np.random.default_rng()
+    rng = ensure_np_rng(rng, key="vectorized_sample")
     n, k = distributions.shape
     cumulative = distributions.cumsum(axis=1)
     u = rng.random(n).reshape(-1, 1)

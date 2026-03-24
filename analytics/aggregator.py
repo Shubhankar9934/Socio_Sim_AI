@@ -10,7 +10,7 @@ import pandas as pd
 def aggregate_responses(
     responses: List[Dict[str, Any]],
     segment_by: str = "location",
-    answer_key: str = "answer",
+    answer_key: str = "sampled_option_canonical",
     agent_id_key: str = "agent_id",
 ) -> Dict[str, Dict[str, float]]:
     """
@@ -42,7 +42,7 @@ def aggregate_with_personas(
     responses: List[Dict[str, Any]],
     personas: List[Any],
     segment_by: str = "location",
-    answer_key: str = "answer",
+    answer_key: str = "sampled_option_canonical",
 ) -> Dict[str, Dict[str, float]]:
     """Join responses with personas to get segment; then aggregate."""
     persona_by_id = {p.agent_id: p for p in personas}
@@ -58,10 +58,32 @@ def aggregate_with_personas(
     return aggregate_responses(responses, segment_by=segment_by, answer_key=answer_key)
 
 
+def verbatim_examples_by_segment(
+    responses: List[Dict[str, Any]],
+    personas: List[Any],
+    segment_by: str = "location",
+    limit_per_segment: int = 3,
+) -> Dict[str, List[str]]:
+    """Keep a few narrative examples per segment for qualitative review."""
+    persona_by_id = {p.agent_id: p for p in personas}
+    out: Dict[str, List[str]] = {}
+    for r in responses:
+        aid = r.get("agent_id")
+        p = persona_by_id.get(aid) if aid else None
+        seg = getattr(p, segment_by, "unknown") if p is not None else "unknown"
+        ans = r.get("answer")
+        if not ans:
+            continue
+        bucket = out.setdefault(str(seg), [])
+        if len(bucket) < limit_per_segment:
+            bucket.append(str(ans))
+    return out
+
+
 def frequency_distribution_by_segment(
     responses: List[Dict[str, Any]],
     personas: List[Any],
     segment_by: str = "location",
 ) -> Dict[str, Dict[str, float]]:
-    """Convenience: aggregate_responses with answer_key='answer' and personas."""
+    """Convenience aggregation using canonical sampled options."""
     return aggregate_with_personas(responses, personas, segment_by=segment_by)

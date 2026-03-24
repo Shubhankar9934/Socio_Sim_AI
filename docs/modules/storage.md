@@ -25,8 +25,4 @@ Buffered JSONL streaming for survey responses: append-only per-session files wit
 | `_flush_session(session_id)` | Write buffer to file (caller holds lock). | Pop buffer; if _should_rotate increment _rotation_counters and recompute path; append lines to path with newline. |
 | `read_session(session_id)` | Read all records from session file. | flush(session_id); read _session_path line-by-line; json.loads each line; return list of dicts. |
 
----
-
-## __init__.py
-
-Package marker; may re-export JSONLWriter.
+The `storage` package currently exposes **`writer.py` only** (no separate `__init__.py` file in the repo); import `JSONLWriter` from `storage.writer`.

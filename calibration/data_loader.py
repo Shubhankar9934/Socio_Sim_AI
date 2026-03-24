@@ -13,6 +13,9 @@ from io import StringIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from config.option_space import canonicalize_distribution, canonicalize_option
+from core.rng import make_rng_pack
+
 logger = logging.getLogger(__name__)
 
 
@@ -23,6 +26,7 @@ class RealSurveyData:
     question: str
     responses: List[str]
     demographics: List[Dict[str, str]] = field(default_factory=list)
+    question_model_key: str = "food_delivery_frequency"
 
     @property
     def n_responses(self) -> int:
@@ -34,9 +38,13 @@ class RealSurveyData:
             return {}
         counts: Dict[str, int] = {}
         for r in self.responses:
-            counts[r] = counts.get(r, 0) + 1
+            cr = canonicalize_option(self.question_model_key, r)
+            counts[cr] = counts.get(cr, 0) + 1
         total = sum(counts.values())
-        return {k: round(v / total, 4) for k, v in counts.items()}
+        return canonicalize_distribution(
+            self.question_model_key,
+            {k: round(v / total, 4) for k, v in counts.items()},
+        )
 
     def to_segmented_distributions(
         self, segment_by: str
@@ -61,8 +69,7 @@ class RealSurveyData:
         self, train_fraction: float = 0.8, seed: int = 42
     ) -> tuple["RealSurveyData", "RealSurveyData"]:
         """Split into train/test sets."""
-        import numpy as np
-        rng = np.random.default_rng(seed)
+        rng = make_rng_pack(f"calibration_holdout:{self.question}", base_seed=seed).np_rng
         n = len(self.responses)
         indices = rng.permutation(n)
         split = int(n * train_fraction)
@@ -75,7 +82,8 @@ class RealSurveyData:
                 question=self.question,
                 responses=[self.responses[i] for i in idx],
                 demographics=[self.demographics[i] for i in idx]
-                    if self.demographics else [],
+                if self.demographics else [],
+                question_model_key=self.question_model_key,
             )
 
         return _subset(train_idx), _subset(test_idx)

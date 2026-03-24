@@ -35,8 +35,10 @@ class CausalLearner:
         Uses lagged cross-correlation as a proxy for Granger causality.
         """
         if not timeline or len(timeline) < 3:
-            from causal.graph import build_default_causal_graph
-            return build_default_causal_graph()
+            graph = CausalGraph()
+            graph.metadata["fallback_used"] = True
+            graph.metadata["fallback_reason"] = "insufficient_timeline_data"
+            return graph
 
         if dimension_names is None:
             dimension_names = sorted(timeline[0].get("dimension_means", {}).keys())

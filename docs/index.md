@@ -4,13 +4,16 @@ A research-grade socio-simulation platform that models how large populations for
 
 ## Documentation
 
+- [Vision and goals](vision-and-goals.md) — Purpose, scope, limits, and how docs fit together
 - [Project Overview](overview.md) — What the project does, how pieces connect, features, quick start, scaling, CLI
 - [Architecture](architecture.md) — System flow, API and cognitive pipeline, simulation loop, calibration/discovery/evaluation flows, end-to-end flow
+- [Doc inventory](DOC_INVENTORY.md) — Route ↔ doc ↔ test map (for maintainers)
 - [Root Scripts](root-scripts.md) — main.py, regenerate_survey.py, benchmark_scale.py, validate_realism.py
 - **Module Reference** — Per-folder documentation (every file: classes, functions, what and how):
-  - [Agents](modules/agents.md) | [Analytics](modules/analytics.md) | [API](modules/api.md) | [Calibration](modules/calibration.md) | [Causal](modules/causal.md) | [Config](modules/config.md) | [Data](modules/data.md) | [Discovery](modules/discovery.md)
+  - [Agents](modules/agents.md) | [Analytics](modules/analytics.md) | [API](modules/api.md) | [Calibration](modules/calibration.md) | [Causal](modules/causal.md) | [Config](modules/config.md) | [Core](modules/core.md) | [Data](modules/data.md) | [Discovery](modules/discovery.md)
   - [Evaluation](modules/evaluation.md) | [LLM](modules/llm.md) | [Media](modules/media.md) | [Memory](modules/memory.md) | [Population](modules/population.md)
   - [Postman](modules/postman.md) | [Research](modules/research.md) | [Simulation](modules/simulation.md) | [Social](modules/social.md) | [Storage](modules/storage.md) | [World](modules/world.md) | [Tests](modules/tests.md)
+- **Examples** — [docs/examples/](examples/README.md) small JSON snippets
 
 ## Architecture Overview
 
@@ -19,17 +22,19 @@ JADU is a layered system stack:
 | Layer | Module | Description |
 |-------|--------|-------------|
 | 0 | `config/domain.py`, `config/demographics.py` | Domain config and demographics from `data/domains/{id}/` |
+| 0a | `config/option_space.py`, `config/generated_registry.py` | Canonical answer spaces; persisted LLM-generated question structures |
 | 0b | `discovery/` | Dimension discovery, domain auto-setup, action inference |
 | 0c | `calibration/` | Factor weight optimization, real data loader, calibration pipeline |
-| 1 | `population/` | Monte Carlo / Bayesian / IPF synthesis of 100K+ agents |
-| 2 | `simulation/archetypes.py` | KMeans compression for shared LLM reasoning |
+| 0d | `core/rng.py` | Master-seeded RNG packs for reproducible stochastic behavior |
+| 1 | `population/` | Monte Carlo / Bayesian / IPF synthesis; constraints, lazy store, life paths |
+| 2 | `simulation/archetypes.py`, `simulation/archetype_runner.py` | KMeans compression and archetyped survey rounds |
 | 3 | `research/` | Web search + fact extraction for shared factual grounding |
 | 4 | `media/` | Narrative framing, selective exposure, echo chambers |
 | 5 | `media/attention.py` | Adaptive attention (emotion-perception feedback loop) |
-| 6 | `agents/biases.py` | Bounded-rational bias engine with residual mixing |
+| 6 | `agents/biases.py`, `agents/intent_router.py`, `agents/response_contract.py` | Biases, hybrid NLU, decision→narrative contract |
 | 7 | `simulation/cascade_detector.py` | Activation dynamics (outrage/validation asymmetry) |
 | 8 | `social/` | Barabasi-Albert graph, sparse matrix diffusion |
-| 9 | `simulation/cascade_detector.py` | Sparse connected-component cluster detection |
+| 9 | `simulation/coordinator.py` | Multi-round survey population health + invariants |
 | 10 | `simulation/engine.py` | 13-step causally-correct daily loop |
 
 ## Core Mathematical Models

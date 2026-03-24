@@ -10,7 +10,7 @@ The agent cognitive engine: perception, decision-making, personality, beliefs, b
 
 | Class | Description |
 |-------|-------------|
-| `AgentState` | Mutable state for one agent. Core fields: `latent_state` (12-dim behavioral vector), `beliefs`, `habit_profile`, `last_answers`, `structured_memory`, `life_event_history`, `friends_using_delivery`, `current_day`. |
+| `AgentState` | Mutable state for one agent. **Primary:** `latent_state` (12-dim `BehavioralLatentState`), `beliefs`, `identity`, `goal_profile`, `habit_profile`, `last_answers`, `structured_memory`, `social_trait_fraction`, `current_day`. **Memory tiers:** `medium_term_memory`, `long_term_preferences`. **Bias / activation:** `base_malleability`, `calcification`, `knowledge_levels`, `topic_importances`, `activation`, `activation_prev`, `current_activation`, `cooldown_topics`, `fatigue_history`. **Conversation:** `interaction_mode`, `recent_interaction_modes`, `recent_utterances`, `turn_count`, `fatigue`, `emotional_state`, `question_history`, `survey_run_id`, `nlu_question_id`. **Media:** `media_exposure_history`. **Identity evolution:** `identity_anchor`, `anchor_elasticity`, `identity_version`, `identity_shift_log`. Property **`friends_using_delivery`** aliases **`social_trait_fraction`** (backward compat). |
 
 ### Key Methods
 
@@ -313,6 +313,76 @@ The agent cognitive engine: perception, decision-making, personality, beliefs, b
 | `pick_opening`, `pick_opening_deduplicated` | Sentence opening patterns. |
 | `validate_narrative_consistency(narrative, sampled_option, scale)` | Check contradiction. |
 | `is_banned_pattern(text)` | AI-style pattern detection. |
+
+---
+
+## intent_router.py
+
+**Purpose**: Hybrid **turn understanding** and **intent classification** for survey vs conversation vs qualitative modes; option-list stripping for qualitative questions; caching keyed by `survey_run_id` / request scope. Feeds perception and prompt routing.
+
+### Highlights
+
+| Symbol | Role |
+|--------|------|
+| `IntentClass`, `INTERACTION_MODES` | Fine-grained intent labels and allowed modes. |
+| `build_turn_understanding_hybrid`, `normalize_turn` | NLU + normalization pipeline. |
+| `strip_survey_options_if_qualitative` | Removes misleading Likert-style options when the turn is qualitative (used in [`simulation/orchestrator.py`](../../simulation/orchestrator.py) and multi-survey routes). |
+| `clear_turn_understanding_cache()` | Clear in-process cache between studies in long-lived processes. |
+
+**Tests:** [`tests/test_hybrid_understanding.py`](../../tests/test_hybrid_understanding.py), [`tests/test_question_understanding.py`](../../tests/test_question_understanding.py).
+
+---
+
+## response_contract.py
+
+**Purpose**: **Decision → narrative contract** — confidence bands, tone, expected score, dominant factor, tradeoff guidance so the LPFG/decision layer remains authoritative and the LLM only renders language.
+
+### Highlights
+
+| Symbol | Role |
+|--------|------|
+| `ResponseDecisionContract` | Frozen dataclass threaded into narrative prompts. |
+| `build_response_contract` | Built from distribution + context in orchestrator/cognitive paths. |
+| `compute_confidence_band` | Maps max probability to low/medium/high bands (settings-driven thresholds). |
+
+**Tests:** [`tests/test_response_contract.py`](../../tests/test_response_contract.py).
+
+---
+
+## context_relevance.py
+
+**Purpose**: **Tiered prompt inclusion** — which persona slices (lifestyle, mobility, beliefs, etc.) are injected for a given question so irrelevant anchors do not flood the LLM context.
+
+### Highlights
+
+| Symbol | Role |
+|--------|------|
+| `ContextRelevancePolicy` | Flags for each context slice. |
+| `resolve_context_relevance` | Computes policy from normalized question text + keywords. |
+
+---
+
+## memory_manager.py
+
+**Purpose**: **Three-tier memory** — short-term (`structured_memory`, `last_answers`), medium-term compressed summaries, long-term preference signals; compression moves information down tiers for long multi-round surveys.
+
+### Constants
+
+| Name | Role |
+|------|------|
+| `MAX_MEDIUM_TERM`, `MAX_SHORT_TERM_ANSWERS`, `MAX_STRUCTURED_MEMORY` | Caps per tier. |
+
+---
+
+## adaptive_layer.py
+
+**Purpose**: **LLM-generated question structures** — proposes `QuestionModel`-like scales and factor weights for novel questions; integrates with [`config/generated_registry.py`](../../config/generated_registry.py) and validates against allowed factor / semantic profiles.
+
+---
+
+## behavior_controller.py
+
+**Purpose**: Unified **BehaviorBudget** for narrative post-processing (hedging, fragments, polish, micro-contradictions, etc.) with a per-response cap so transforms do not stack without bound. `BehaviorController.compute_budget` derives probabilities from fatigue, confidence band, and grammar quality.
 
 ---
 

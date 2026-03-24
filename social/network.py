@@ -11,7 +11,14 @@ import networkx as nx
 from population.personas import Persona
 
 
-RELATIONSHIP_TYPES = ("friend", "coworker", "neighbor")
+RELATIONSHIP_TYPES = ("friend", "coworker", "neighbor", "family")
+
+TIE_STRENGTH: Dict[str, float] = {
+    "family": 1.0,
+    "coworker": 0.6,
+    "neighbor": 0.5,
+    "friend": 0.7,
+}
 
 
 def _agent_ids(personas: List[Persona]) -> List[str]:
@@ -40,7 +47,7 @@ def assign_relationship_types(
     seed: Optional[int] = None,
 ) -> None:
     """
-    Assign edge relationship type: friend, coworker, neighbor.
+    Assign edge relationship type and tie strength.
     Uses location for neighbor, occupation for coworker, else friend.
     """
     rng = random.Random(seed)
@@ -58,9 +65,12 @@ def assign_relationship_types(
             else:
                 rel = "friend"
         else:
-            rel = rng.choice(RELATIONSHIP_TYPES)
+            rel = rng.choice(["friend", "coworker", "neighbor"])
         G[u][v]["relationship"] = rel
         G[v][u]["relationship"] = rel
+        strength = TIE_STRENGTH.get(rel, 0.5)
+        G[u][v]["tie_strength"] = strength
+        G[v][u]["tie_strength"] = strength
 
 
 def _assign_similarity_weights(
@@ -85,6 +95,48 @@ def _assign_similarity_weights(
         G[v][u]["similarity"] = sim
 
 
+def _add_family_edges(
+    G: nx.Graph,
+    personas: List[Persona],
+    id_list: List[str],
+    seed: Optional[int] = None,
+) -> None:
+    """Link agents who could plausibly be family (spouse/children).
+
+    For each agent with a spouse, find a compatible agent in a similar
+    location/age bracket and add a high-strength family edge. This makes
+    family influence flow through the social diffusion graph.
+    """
+    rng = random.Random(seed)
+    persona_by_id = _persona_by_id(personas)
+    id_to_node = {aid: i for i, aid in enumerate(id_list)}
+
+    # Build location index for efficient matching
+    location_groups: Dict[str, List[str]] = {}
+    for p in personas:
+        location_groups.setdefault(p.location, []).append(p.agent_id)
+
+    paired: Set[str] = set()
+    for p in personas:
+        if not p.family.spouse or p.agent_id in paired:
+            continue
+        candidates = [
+            aid for aid in location_groups.get(p.location, [])
+            if aid != p.agent_id
+            and aid not in paired
+            and persona_by_id[aid].family.spouse
+        ]
+        if not candidates:
+            continue
+        partner_id = rng.choice(candidates)
+        u = id_to_node.get(p.agent_id)
+        v = id_to_node.get(partner_id)
+        if u is not None and v is not None and not G.has_edge(u, v):
+            G.add_edge(u, v, relationship="family", tie_strength=1.0, similarity=0.9)
+        paired.add(p.agent_id)
+        paired.add(partner_id)
+
+
 def build_social_network(
     personas: List[Persona],
     m: int = 4,
@@ -93,7 +145,7 @@ def build_social_network(
     """
     Build Barabasi-Albert graph over agents; node i = personas[i].
     Returns graph with integer nodes 0..n-1; use id_list to map to agent_id.
-    Edges carry both relationship type and homophily similarity weight.
+    Edges carry relationship type, tie strength, and homophily similarity weight.
     """
     n = len(personas)
     if n < 2:
@@ -104,6 +156,7 @@ def build_social_network(
     id_list = _agent_ids(personas)
     assign_relationship_types(G, personas, id_list, seed=seed)
     _assign_similarity_weights(G, personas, id_list)
+    _add_family_edges(G, personas, id_list, seed=seed)
     G.graph["agent_ids"] = id_list
     return G
 
@@ -149,12 +202,13 @@ def neighbors_by_relationship(
     return out
 
 
-def to_sparse_adjacency(G: nx.Graph):
+def to_sparse_adjacency(G: nx.Graph, use_tie_strength: bool = True):
     """Convert NetworkX graph to a scipy sparse CSR matrix.
 
     Uses the pre-computed ``similarity`` edge weight so that social
-    diffusion is homophily-weighted.  Falls back to binary adjacency
-    if similarity weights are missing.
+    diffusion is homophily-weighted.  When ``use_tie_strength`` is True,
+    the similarity weight is multiplied by the tie_strength attribute
+    so family/close ties carry more diffusion weight.
 
     Returns scipy.sparse.csr_matrix of shape (N, N).
     """
@@ -164,7 +218,15 @@ def to_sparse_adjacency(G: nx.Graph):
     if n == 0:
         return sp.csr_matrix((0, 0), dtype=float)
     try:
-        A = nx.to_scipy_sparse_array(G, weight="similarity", format="csr")
+        A_sim = nx.to_scipy_sparse_array(G, weight="similarity", format="csr")
+        if use_tie_strength:
+            try:
+                A_tie = nx.to_scipy_sparse_array(G, weight="tie_strength", format="csr")
+                A = A_sim.multiply(A_tie)
+            except Exception:
+                A = A_sim
+        else:
+            A = A_sim
     except Exception:
         A = nx.to_scipy_sparse_array(G, format="csr")
     return A

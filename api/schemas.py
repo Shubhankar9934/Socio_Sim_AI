@@ -29,6 +29,7 @@ class AgentDetail(BaseModel):
     agent_id: str
     persona: Dict[str, Any]
     state: Optional[Dict[str, Any]] = None
+    decision_profile: Optional[Dict[str, Any]] = None
 
 
 # --- Survey ---
@@ -36,6 +37,7 @@ class SurveyRequest(BaseModel):
     question: str
     question_id: Optional[str] = ""
     use_archetypes: bool = False
+    diagnostics: bool = False
     options: Optional[List[str]] = None  # If empty or None, treated as open_text
     current_events: Optional[List[Dict[str, Any]]] = None  # Real-time media: temp_beliefs at survey time
 
@@ -63,8 +65,18 @@ class AgentLifestyle(BaseModel):
 class SurveyResponseItem(BaseModel):
     agent_id: str
     answer: str
+    interaction_mode: Optional[str] = None
+    turn_understanding: Optional[Dict[str, Any]] = None
     sampled_option: Optional[str] = None
+    sampled_option_canonical: Optional[str] = None
     distribution: Optional[Dict[str, float]] = None
+    question_model_key: Optional[str] = None
+    option_space_key: Optional[str] = None
+    decision_trace: Optional[Dict[str, Any]] = None
+    narrative_alignment_status: Optional[str] = None
+    run_metadata: Optional[Dict[str, Any]] = None
+    response_diagnostics: Optional[Dict[str, Any]] = None
+    fallback_flags: Optional[List[str]] = None
     demographics: Optional[AgentDemographics] = None
     lifestyle: Optional[AgentLifestyle] = None
     error: Optional[str] = None
@@ -87,6 +99,7 @@ class SurveyQuestionItem(BaseModel):
 class MultiSurveyRequest(BaseModel):
     questions: List[SurveyQuestionItem]
     use_archetypes: bool = False
+    diagnostics: bool = False
     social_influence_between_rounds: bool = True
     summarize_every: int = Field(default=5, ge=1, le=50, description="Summarize agent memory every N rounds")
 
@@ -176,6 +189,8 @@ class EvaluateRequest(BaseModel):
     drift_threshold: float = 0.3
     run_similarity: bool = True
     similarity_threshold: float = 0.9
+    reference_distribution: Optional[Dict[str, float]] = None
+    question_model_key: Optional[str] = None
 
 
 class DashboardMetrics(BaseModel):
@@ -191,6 +206,7 @@ class EvaluationReportResponse(BaseModel):
     population_realism: Dict[str, Any]
     drift: Dict[str, Any]
     consistency_score: float
+    consistency_valid: bool = False
     distribution_validation: Optional[Dict[str, Any]] = None
     narrative_similarity: Optional[Dict[str, Any]] = None
     llm_judge: Optional[Dict[str, Any]] = None

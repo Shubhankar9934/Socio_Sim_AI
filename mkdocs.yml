@@ -1,5 +1,14 @@
 site_name: JADU — Socio Simulation AI
 site_description: Computational model of collective human cognition under information pressure
+
+# JADU API pages link to Python modules at repo root (outside docs/). Ignore those
+# targets during link validation so `mkdocs build` / CI stay clean.
+validation:
+  links:
+    not_found: ignore
+  nav:
+    omitted_files: info
+
 theme:
   name: material
   palette:
@@ -8,13 +17,18 @@ theme:
 nav:
   - Home: index.md
   - Overview: overview.md
+  - Vision and goals: vision-and-goals.md
   - Architecture: architecture.md
   - Root Scripts: root-scripts.md
+  - Doc inventory: DOC_INVENTORY.md
+  - Examples: examples/README.md
   - JADU API reference (Postman):
       - Index: jadu-api/README.md
+      - Page template: jadu-api/DOC_TEMPLATE.md
       - Population: jadu-api/population.md
       - Agents: jadu-api/agents.md
       - Survey: jadu-api/survey.md
+      - WebSockets: jadu-api/websockets.md
       - Simulation: jadu-api/simulation.md
       - Analytics: jadu-api/analytics.md
       - Evaluation: jadu-api/evaluation.md
@@ -26,6 +40,7 @@ nav:
     - API: modules/api.md
     - Calibration: modules/calibration.md
     - Config: modules/config.md
+    - Core: modules/core.md
     - Causal: modules/causal.md
     - Discovery: modules/discovery.md
     - Data: modules/data.md

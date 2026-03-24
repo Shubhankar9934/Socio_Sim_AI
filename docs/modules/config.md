@@ -161,6 +161,37 @@ Conditionals: INCOME_GIVEN_NATIONALITY, LOCATION_GIVEN_INCOME, OCCUPATION_GIVEN_
 
 ---
 
+## option_space.py
+
+**Purpose**: **Canonical option spaces** and alias normalization — maps free-text or API options to registry keys (e.g. `food_delivery_frequency`, `generic_frequency`) so `sampled_option` and `sampled_option_canonical` stay aligned across wording variants. Used by orchestrator and hybrid option validation.
+
+### Datatypes
+
+| Name | Role |
+|------|------|
+| `OptionSpace` | `key`, `canonical_options`, `aliases`. |
+| `OPTION_SPACES` | Built-in registry. |
+
+### Functions
+
+| Function | Role |
+|----------|------|
+| `canonicalize_option`, `get_option_space_key` | Normalization helpers at survey time. |
+
+---
+
+## generated_registry.py
+
+**Purpose**: Persistent JSON registry at `config/generated_models.json` for **LLM-generated question structures** (models, references, constraints, question hash map). Loaded/saved via `load_generated_registry` / `save_generated_registry`; used by [`agents/adaptive_layer.py`](../agents/adaptive_layer.py).
+
+---
+
+## calibrated_weights.py
+
+**Purpose**: In-process store for **calibrated factor weights** per `question_model_key` (`set_calibrated_weights`, `get_calibrated_weights`). Populated by calibration endpoints or internal pipelines so `compute_distribution` can prefer learned weights when present.
+
+---
+
 ## __init__.py
 
 Package marker; may re-export config symbols. No required public API listed.

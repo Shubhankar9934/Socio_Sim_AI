@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
+from core.rng import ensure_np_rng, make_rng_pack
 logger = logging.getLogger(__name__)
 
 
@@ -64,7 +65,7 @@ class OutcomeEngine:
           3. Personal reward: goal alignment + bounded rationality noise
         """
         if rng is None:
-            rng = np.random.default_rng()
+            rng = ensure_np_rng(None, key=f"outcome_compute:{action_type}:{target}")
 
         cost = self._compute_cost(action_type, intensity, agent_state, environment)
         social_approval = self._compute_social_approval(
@@ -217,7 +218,7 @@ def process_outcomes_for_agents(
     """
     engine = OutcomeEngine()
     count = 0
-    rng = np.random.default_rng(day)
+    rng = make_rng_pack(f"outcome_process:{day}").np_rng
 
     for a in agents:
         state = a.get("state")

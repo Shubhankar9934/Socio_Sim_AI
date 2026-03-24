@@ -8,8 +8,8 @@ No engine code changes required.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Dict, List
+from dataclasses import dataclass, field, replace
+from typing import Any, Dict, List
 
 
 @dataclass(frozen=True)
@@ -86,6 +86,27 @@ QUESTION_MODELS: Dict[str, QuestionModel] = {
     ),
 
     # --- Transport / Metro -------------------------------------------------
+    "transport_usage_frequency": QuestionModel(
+        name="transport_usage_frequency",
+        scale=["never", "rarely", "sometimes", "often", "very often"],
+        dimension_weights={
+            "mobility_dependence": 0.30,
+            "convenience_preference": 0.25,
+            "price_sensitivity": -0.20,
+            "tech_adoption": 0.15,
+            "social_activity": 0.10,
+        },
+        factor_weights={
+            "personality": 0.33,
+            "income": 0.12,
+            "social": 0.12,
+            "location": 0.10,
+            "memory": 0.07,
+            "behavioral": 0.14,
+            "belief": 0.12,
+        },
+    ),
+
     "transport_satisfaction": QuestionModel(
         name="transport_satisfaction",
         scale=["1", "2", "3", "4", "5"],
@@ -145,6 +166,28 @@ QUESTION_MODELS: Dict[str, QuestionModel] = {
             "location": 0.23,
             "memory": 0.08,
             "behavioral": 0.11,
+            "belief": 0.12,
+        },
+    ),
+
+    # --- Cost of Living ----------------------------------------------------
+    "cost_of_living_satisfaction": QuestionModel(
+        name="cost_of_living_satisfaction",
+        scale=["1", "2", "3", "4", "5"],
+        dimension_weights={
+            "price_sensitivity": -0.45,
+            "convenience_preference": 0.15,
+            "luxury_preference": 0.10,
+            "social_activity": 0.10,
+            "time_pressure": 0.20,
+        },
+        factor_weights={
+            "personality": 0.18,
+            "income": 0.28,
+            "social": 0.04,
+            "location": 0.16,
+            "memory": 0.08,
+            "behavioral": 0.14,
             "belief": 0.12,
         },
     ),
@@ -303,9 +346,60 @@ GENERIC_FALLBACK = GENERIC_LIKERT
 QUESTION_MODELS["generic_duration"] = GENERIC_DURATION
 
 
+_generated_models_loaded = False
+
+
+def _coerce_generated_model(key: str, payload: Dict[str, Any]) -> QuestionModel | None:
+    if not isinstance(payload, dict):
+        return None
+    scale = payload.get("scale", [])
+    if not isinstance(scale, list) or len(scale) < 2:
+        return None
+    name = str(payload.get("name") or key).strip()
+    if not name:
+        return None
+    dim = payload.get("dimension_weights", {})
+    fac = payload.get("factor_weights", {})
+    temp = float(payload.get("temperature", 1.0))
+    return QuestionModel(
+        name=name,
+        scale=[str(v) for v in scale],
+        dimension_weights={str(k): float(v) for k, v in dim.items()} if isinstance(dim, dict) else {},
+        factor_weights={str(k): float(v) for k, v in fac.items()} if isinstance(fac, dict) else {},
+        temperature=max(0.4, min(2.5, temp)),
+    )
+
+
+def load_generated_models_into_registry(force: bool = False) -> None:
+    global _generated_models_loaded
+    if _generated_models_loaded and not force:
+        return
+    try:
+        from config.generated_registry import load_generated_registry
+
+        reg = load_generated_registry()
+        for key, payload in reg.get("models", {}).items():
+            qm = _coerce_generated_model(str(key), payload)
+            if qm is not None:
+                QUESTION_MODELS[qm.name] = qm
+    except Exception:
+        pass
+    _generated_models_loaded = True
+
+
 def get_question_model(key: str, domain_id: str = None) -> QuestionModel:
     """Look up a question model by key; returns the generic fallback if not found."""
-    return QUESTION_MODELS.get(key, GENERIC_FALLBACK)
+    load_generated_models_into_registry()
+    base = QUESTION_MODELS.get(key, GENERIC_FALLBACK)
+    try:
+        from config.calibrated_weights import get_calibrated_weights
+
+        override = get_calibrated_weights(base.name)
+        if override:
+            return replace(base, factor_weights=override)
+    except Exception:
+        pass
+    return base
 
 
 # ---------------------------------------------------------------------------
@@ -334,6 +428,13 @@ QUESTION_DIMENSION_MAP: Dict[str, Dict[str, float]] = {
         "price_sensitivity": 0.15,
         "institutional_trust": 0.20,
     },
+    "transport_usage_frequency": {
+        "convenience_seeking": 0.30,
+        "price_sensitivity": 0.20,
+        "time_pressure": 0.20,
+        "technology_openness": 0.15,
+        "social_influence_susceptibility": 0.15,
+    },
     "shopping_frequency": {
         "convenience_seeking": 0.20,
         "novelty_seeking": 0.20,
@@ -347,6 +448,13 @@ QUESTION_DIMENSION_MAP: Dict[str, Dict[str, float]] = {
         "routine_stability": 0.20,
         "institutional_trust": 0.20,
         "environmental_consciousness": 0.15,
+    },
+    "cost_of_living_satisfaction": {
+        "financial_confidence": 0.35,
+        "price_sensitivity": 0.30,
+        "routine_stability": 0.15,
+        "institutional_trust": 0.10,
+        "social_influence_susceptibility": 0.10,
     },
     "nps_recommendation": {
         "technology_openness": 0.30,

@@ -5,6 +5,7 @@ Returns drift magnitudes per agent and can auto-reset drifted agents.
 
 from typing import Any, Dict, List, Optional
 
+from config.option_space import canonicalize_option
 from population.personas import Persona
 
 _ANSWER_TO_BEHAVIOR: Dict[str, float] = {
@@ -31,12 +32,18 @@ def infer_current_behavior(response_history: List[Dict[str, Any]]) -> float:
     if not response_history:
         return 0.5
     current = 0.5
+    value_map = {
+        "rarely": 0.2,
+        "1-2 per week": 0.45,
+        "3-4 per week": 0.65,
+        "daily": 0.85,
+        "multiple per day": 0.95,
+    }
     for r in response_history:
-        ans = (r.get("answer") or r.get("sampled_option") or "").lower()
-        for keyword, value in _ANSWER_TO_BEHAVIOR.items():
-            if keyword in ans:
-                current = value
-                break
+        sampled = r.get("sampled_option_canonical") or r.get("sampled_option") or r.get("answer") or ""
+        canonical = canonicalize_option("food_delivery_frequency", str(sampled))
+        if canonical in value_map:
+            current = value_map[canonical]
     return current
 
 

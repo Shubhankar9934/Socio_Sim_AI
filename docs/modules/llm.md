@@ -43,12 +43,22 @@ Async OpenAI client and prompt templates for agent reasoning and evaluation.
 
 | Function | Description | How |
 |----------|-------------|-----|
-| `build_agent_prompt(persona, question, sampled_option, distribution, memories, ...)` | Full agent prompt. | Load system prompts from domain; pick system + persona block; add archetype/cultural hints from domain; add behavior model and memory snippet; add question and sampled option; add style instruction (verbosity, tone, opening); consistency warning. |
-| `reasoner_via_llm(persona, question, sampled_answer, distribution, memories, ...)` | Async narrative generation. | If should_use_vague_answer: return pick_vague_answer. Build prompt via build_agent_prompt; call client.chat; if is_banned_pattern(text) retry (max retries); validate_narrative_consistency(narrative, sampled_option, scale); apply maybe_add_hedging, maybe_fragmentize, degrade_polish; validate_demographic_plausibility; return final text. |
+| `build_agent_prompt(persona, question, sampled_option, distribution, memories, ...)` | Full agent prompt with response contract support. | Builds persona/memory/style blocks, then applies Decision->Expression contract hints (`expression_mode`, `confidence_band`, `latent_stance`) so wording follows LPFG output without changing the selected answer. |
+| `reasoner_via_llm(persona, question, sampled_answer, distribution, memories, ...)` | Async narrative generation under LPFG authority. | Uses seeded prompt generation, retry-on-contradiction checks, and confidence-to-tone mapping from the response contract; narrative is constrained to explain the selected option (or open latent stance) rather than decide it. |
 | `build_judge_prompt(persona_summary, question, response)` | Judge prompt. | Asks LLM to score realism, persona_consistency, cultural_plausibility 1–5; JSON output. |
 | `compress_persona_for_display(persona)` | Short summary. | Natural language from persona attributes. |
 | `infer_scale_type(options)` | Scale type from options. | No options → open_text; all digits → numeric; frequency terms → frequency; 2 options → categorical; else likert. |
 | `allow_persona_anchor(question)` | Whether to inject lifestyle anchors. | Question-domain heuristics. |
+
+### Decision->Expression Contract
+
+- Decision authority remains in LPFG (`distribution`, `sampled_option`).
+- Prompting consumes a response contract from cognitive layer:
+  - `expression_mode`: `structured_expression` or `open_expression`
+  - `confidence_band`: `high|medium|low`
+  - `tone_selected`: wording style only
+  - `expected_score` / `latent_stance`: open-text grounding signal
+- API diagnostics exposure is opt-in (`diagnostics=true`); default responses do not include response diagnostics.
 
 ### Constants
 

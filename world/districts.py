@@ -3,7 +3,7 @@ District properties: population_density, metro_access, restaurant_density, etc.
 """
 
 from dataclasses import dataclass
-from typing import Dict
+from typing import Dict, Optional
 
 from config.demographics import get_demographics
 
@@ -47,9 +47,66 @@ def _build_default_districts() -> Dict[str, DistrictProperties]:
 # Populate on import
 DEFAULT_DISTRICT_PROPERTIES = _build_default_districts()
 
+# Aliases and minor variants seen in personas / data (→ canonical registry key)
+_DISTRICT_ALIASES: Dict[str, str] = {
+    "dubai marina": "Dubai Marina",
+    "marina": "Dubai Marina",
+    "business bay": "Business Bay",
+    "businessbay": "Business Bay",
+    "jlt": "JLT",
+    "jumeirah lakes towers": "JLT",
+    "jumeirah": "Jumeirah",
+    "jumeirah village circle": "JVC",
+    "jvc": "JVC",
+    "deira": "Deira",
+    "downtown": "Downtown",
+    "downtown dubai": "Downtown",
+    "al barsha": "Al Barsha",
+    "barsha": "Al Barsha",
+    "al karama": "Al Karama",
+    "karama": "Al Karama",
+    "others": "Others",
+    "other": "Others",
+}
+
+# Explicit LPFG location factor signal per district (spread away from 0.5).
+# Interpretation: mobility / environment / rent-pressure blend for relocation & satisfaction
+# graphs — MUST differ across Dubai Marina vs Deira vs JVC so importance is non-zero.
+DISTRICT_LOCATION_FACTOR_SCORE: Dict[str, float] = {
+    "Dubai Marina": 0.38,
+    "Jumeirah": 0.44,
+    "Business Bay": 0.40,
+    "JLT": 0.39,
+    "Downtown": 0.36,
+    "Al Barsha": 0.46,
+    "JVC": 0.58,
+    "Deira": 0.63,
+    "Al Karama": 0.61,
+    "Others": 0.52,
+}
+
+
+def canonicalize_district_name(name: str) -> str:
+    """Map free-text location to a known district key when possible."""
+    raw = (name or "").strip()
+    if not raw:
+        return "Others"
+    if raw in DEFAULT_DISTRICT_PROPERTIES:
+        return raw
+    key = raw.lower()
+    if key in _DISTRICT_ALIASES:
+        return _DISTRICT_ALIASES[key]
+    for canon in DEFAULT_DISTRICT_PROPERTIES:
+        if canon.lower() == key:
+            return canon
+    return raw
+
 
 def get_district(name: str) -> DistrictProperties:
     """Get district properties by name."""
+    canon = canonicalize_district_name(name)
+    if canon in DEFAULT_DISTRICT_PROPERTIES:
+        return DEFAULT_DISTRICT_PROPERTIES[canon]
     return DEFAULT_DISTRICT_PROPERTIES.get(
         name,
         DistrictProperties(name, "medium", 25000, False, "medium", "medium"),
@@ -57,8 +114,31 @@ def get_district(name: str) -> DistrictProperties:
 
 
 def location_quality_for_satisfaction(district_name: str) -> float:
-    """Scalar 0-1 for use in satisfaction models (parking, transport)."""
-    d = get_district(district_name)
-    parking_score = {"low": 0.3, "medium": 0.6, "high": 0.9}.get(d.parking_availability, 0.5)
-    metro_score = 0.2 if d.metro_access else 0.0
-    return min(1.0, parking_score * 0.5 + 0.5 * (0.5 + metro_score))
+    """Scalar in [0,1] for LPFG location_factor — differentiated per district.
+
+    The old formula ``parking*0.5 + 0.5*(0.5+metro)`` collapsed to **exactly 0.5**
+    for every low-parking + metro district (e.g. Dubai Marina, Business Bay),
+    yielding zero importance (|raw-0.5|) and starving the decision graph.
+    """
+    canon = canonicalize_district_name(district_name)
+    if canon in DISTRICT_LOCATION_FACTOR_SCORE:
+        return float(DISTRICT_LOCATION_FACTOR_SCORE[canon])
+
+    d = get_district(canon)
+    # Non-collapsing blend: parking and metro push in different directions so
+    # few rows land exactly on 0.5.
+    parking = {"low": 0.28, "medium": 0.52, "high": 0.78}.get(d.parking_availability, 0.50)
+    metro_adj = 0.10 if d.metro_access else -0.06
+    density_adj = {"low": -0.04, "medium": 0.0, "high": 0.05}.get(d.population_density, 0.0)
+    score = 0.62 * parking + 0.28 * (0.45 + metro_adj) + density_adj
+    return float(max(0.0, min(1.0, score)))
+
+
+def resolve_location_quality(
+    district_name: str,
+    explicit: Optional[float] = None,
+) -> float:
+    """Use an explicit survey-time override when set; otherwise derive from district."""
+    if explicit is not None:
+        return max(0.0, min(1.0, float(explicit)))
+    return float(location_quality_for_satisfaction(district_name or ""))
